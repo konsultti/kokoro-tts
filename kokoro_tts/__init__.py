@@ -1195,30 +1195,62 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                                     print(f"\nError reading chapter file {chapter_file}: {e}")
                         print()  # New line after progress
                     else:
-                        # For MP3/M4A, use pydub to concatenate without loading all into memory
-                        from pydub import AudioSegment
+                        # For MP3/M4A, use FFmpeg directly to avoid memory issues with large files
+                        # pydub's export() creates intermediate WAV files which can exceed 4GB limit
+                        import subprocess
 
                         print(f"Merging {len(chapter_files)} chapters...")
-                        combined = AudioSegment.empty()
 
-                        for i, chapter_file in enumerate(chapter_files, 1):
-                            try:
-                                # Use 'mp4' format for m4a files (FFmpeg requirement)
-                                load_format = 'mp4' if format == 'm4a' else format
-                                chapter_audio = AudioSegment.from_file(chapter_file, format=load_format)
-                                combined += chapter_audio
-                                print(f"  Merged chapter {i}/{len(chapter_files)}", end='\r')
-                            except Exception as e:
-                                print(f"\nError reading chapter file {chapter_file}: {e}")
+                        # Create a temporary file list for FFmpeg concat demuxer
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                            filelist_path = f.name
+                            for chapter_file in chapter_files:
+                                # FFmpeg concat demuxer requires absolute paths
+                                abs_path = os.path.abspath(chapter_file)
+                                # Escape single quotes for FFmpeg
+                                escaped_path = abs_path.replace("'", "'\\''")
+                                f.write(f"file '{escaped_path}'\n")
 
-                        print()  # New line after progress
-                        print(f"Saving combined audiobook...")
-                        # Use 'mp4' format for m4a files (FFmpeg requirement)
-                        export_format = 'mp4' if format == 'm4a' else format
-                        export_kwargs = {'format': export_format}
-                        if format == 'm4a':
-                            export_kwargs['codec'] = 'aac'
-                        combined.export(audiobook_file, **export_kwargs)
+                        try:
+                            print(f"Combining chapters using FFmpeg (memory efficient)...")
+
+                            # Build FFmpeg command for concat
+                            if format == 'm4a':
+                                # For M4A: concat using concat demuxer, re-encode to AAC
+                                ffmpeg_cmd = [
+                                    'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                                    '-i', filelist_path,
+                                    '-c:a', 'aac', '-b:a', '128k',
+                                    audiobook_file
+                                ]
+                            else:  # mp3
+                                # For MP3: concat using concat demuxer, copy codec (no re-encode)
+                                ffmpeg_cmd = [
+                                    'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                                    '-i', filelist_path,
+                                    '-c', 'copy',
+                                    audiobook_file
+                                ]
+
+                            # Run FFmpeg
+                            result = subprocess.run(
+                                ffmpeg_cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True
+                            )
+
+                            if result.returncode != 0:
+                                print(f"\nFFmpeg error: {result.stderr}")
+                                raise Exception(f"FFmpeg failed with return code {result.returncode}")
+
+                            print(f"Successfully merged {len(chapter_files)} chapters")
+
+                        finally:
+                            # Clean up temporary file list
+                            if os.path.exists(filelist_path):
+                                os.unlink(filelist_path)
 
                     print(f"\nComplete audiobook saved: {audiobook_file}")
 
