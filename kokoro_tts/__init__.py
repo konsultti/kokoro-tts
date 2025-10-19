@@ -1203,7 +1203,9 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
 
                         for i, chapter_file in enumerate(chapter_files, 1):
                             try:
-                                chapter_audio = AudioSegment.from_file(chapter_file, format=format)
+                                # Use 'mp4' format for m4a files (FFmpeg requirement)
+                                load_format = 'mp4' if format == 'm4a' else format
+                                chapter_audio = AudioSegment.from_file(chapter_file, format=load_format)
                                 combined += chapter_audio
                                 print(f"  Merged chapter {i}/{len(chapter_files)}", end='\r')
                             except Exception as e:
@@ -1211,7 +1213,12 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
 
                         print()  # New line after progress
                         print(f"Saving combined audiobook...")
-                        combined.export(audiobook_file, format=format)
+                        # Use 'mp4' format for m4a files (FFmpeg requirement)
+                        export_format = 'mp4' if format == 'm4a' else format
+                        export_kwargs = {'format': export_format}
+                        if format == 'm4a':
+                            export_kwargs['codec'] = 'aac'
+                        combined.export(audiobook_file, **export_kwargs)
 
                     print(f"\nComplete audiobook saved: {audiobook_file}")
 
@@ -1221,7 +1228,9 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                             data, sr = sf.read(audiobook_file)
                             duration_sec = len(data) / sr
                         else:
-                            audio = AudioSegment.from_file(audiobook_file, format=format)
+                            # Use 'mp4' format for m4a files (FFmpeg requirement)
+                            load_format = 'mp4' if format == 'm4a' else format
+                            audio = AudioSegment.from_file(audiobook_file, format=load_format)
                             duration_sec = len(audio) / 1000.0
 
                         hours = int(duration_sec // 3600)
