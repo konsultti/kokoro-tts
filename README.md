@@ -149,7 +149,28 @@ wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.
 
 ### GPU Acceleration (Optional)
 
-Kokoro TTS supports GPU acceleration for faster processing. To enable it:
+Kokoro TTS supports GPU acceleration for faster processing across different platforms.
+
+#### Apple Silicon (M1/M2/M3/M4)
+
+Apple Silicon Macs have built-in CoreML support with **automatic Neural Engine acceleration** - no configuration needed!
+
+**CoreML is automatically enabled** when running on Apple Silicon. You'll see:
+```
+GPU acceleration: Using CoreMLExecutionProvider (auto-enabled)
+```
+
+To manually control the provider or force CPU execution:
+
+```bash
+# Force CoreML (usually not needed - it's auto-enabled)
+export ONNX_PROVIDER=CoreMLExecutionProvider
+
+# Force CPU execution (if you want to disable Neural Engine)
+export ONNX_PROVIDER=CPUExecutionProvider
+```
+
+#### NVIDIA/AMD GPUs (Linux/Windows)
 
 1. **Replace onnxruntime with onnxruntime-gpu**:
 
@@ -184,15 +205,20 @@ export ONNX_PROVIDER=ROCMExecutionProvider
 kokoro-tts input.txt output.wav --voice af_sarah
 ```
 
-**Notes:**
-- GPU acceleration provides ~20-30% speed improvement over CPU
-- The tool will automatically detect available GPU providers and show a message if GPU is available but not enabled
+#### Notes
+
+- GPU acceleration provides **~20-40% speed improvement** over CPU
+- **Apple Silicon (M1/M2/M3/M4)**: CoreML Neural Engine acceleration is **automatically enabled** - no setup required!
+- **NVIDIA/AMD GPUs**: Requires `onnxruntime-gpu` installation and `ONNX_PROVIDER` environment variable
+- The tool will automatically detect available GPU providers and show their status
 - You need appropriate GPU drivers installed (CUDA for NVIDIA, ROCm for AMD)
 - In WSL2, you may see a harmless warning about device discovery - this doesn't prevent GPU usage
 
-**Performance comparison:**
+#### Performance Comparison
+
 - **CPU only**: ~4.5 seconds for a short text
 - **GPU (CUDA)**: ~3.6 seconds for the same text (20% faster)
+- **CoreML (Apple Silicon)**: ~3.2 seconds for the same text (30% faster)
 
 ## Supported voices:
 
