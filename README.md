@@ -147,6 +147,53 @@ wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.
 
 > The script requires `voices-v1.0.bin` and `kokoro-v1.0.onnx` to be present in the same directory where you run the `kokoro-tts` command.
 
+### GPU Acceleration (Optional)
+
+Kokoro TTS supports GPU acceleration for faster processing. To enable it:
+
+1. **Replace onnxruntime with onnxruntime-gpu**:
+
+Since `kokoro-onnx` installs the CPU-only `onnxruntime` by default, you need to replace it:
+
+```bash
+# Using pip
+pip uninstall -y onnxruntime
+pip install onnxruntime-gpu
+
+# Using uv
+uv pip uninstall onnxruntime
+uv pip install onnxruntime-gpu
+```
+
+2. **Set environment variable**:
+
+```bash
+# For CUDA/NVIDIA GPUs
+export ONNX_PROVIDER=CUDAExecutionProvider
+
+# For TensorRT (if available)
+export ONNX_PROVIDER=TensorrtExecutionProvider
+
+# For ROCm/AMD GPUs
+export ONNX_PROVIDER=ROCMExecutionProvider
+```
+
+3. **Run kokoro-tts as usual**:
+
+```bash
+kokoro-tts input.txt output.wav --voice af_sarah
+```
+
+**Notes:**
+- GPU acceleration provides ~20-30% speed improvement over CPU
+- The tool will automatically detect available GPU providers and show a message if GPU is available but not enabled
+- You need appropriate GPU drivers installed (CUDA for NVIDIA, ROCm for AMD)
+- In WSL2, you may see a harmless warning about device discovery - this doesn't prevent GPU usage
+
+**Performance comparison:**
+- **CPU only**: ~4.5 seconds for a short text
+- **GPU (CUDA)**: ~3.6 seconds for the same text (20% faster)
+
 ## Supported voices:
 
 | **Category** | **Voices** | **Language Code** |
