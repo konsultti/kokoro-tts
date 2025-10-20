@@ -538,6 +538,10 @@ def launch_ui(
 ):
     """Launch the Gradio web UI.
 
+    This function can be called directly or used as a console entry point.
+    When used as a console entry point (kokoro-tts-ui), it parses command-line
+    arguments automatically.
+
     Args:
         model_path: Path to Kokoro model file
         voices_path: Path to voices file
@@ -545,6 +549,24 @@ def launch_ui(
         server_port: Server port
         share: Create public share link
     """
+    # If called as entry point, parse args
+    import sys
+    if len(sys.argv) > 1:
+        import argparse
+        parser = argparse.ArgumentParser(description="Launch Kokoro TTS Web UI")
+        parser.add_argument("--model", default=model_path, help="Path to model file")
+        parser.add_argument("--voices", default=voices_path, help="Path to voices file")
+        parser.add_argument("--server-name", default=server_name, help="Server hostname")
+        parser.add_argument("--server-port", type=int, default=server_port, help="Server port")
+        parser.add_argument("--share", action="store_true", help="Create public share link")
+        args = parser.parse_args()
+
+        model_path = args.model
+        voices_path = args.voices
+        server_name = args.server_name
+        server_port = args.server_port
+        share = args.share
+
     demo = create_ui(model_path, voices_path, share)
     demo.launch(
         server_name=server_name,
