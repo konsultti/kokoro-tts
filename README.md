@@ -6,17 +6,18 @@ A CLI text-to-speech tool using the Kokoro model, supporting multiple languages,
 
 ## Features
 
-- Multiple language and voice support
-- Voice blending with customizable weights
+- Multiple language and voice support (10 languages, 48+ voices)
+- Voice blending with customizable weights (2 or more voices)
 - EPUB, PDF and TXT file input support
 - Standard input (stdin) and `|` piping from other programs
 - Streaming audio playback
-- Split output into chapters
-- Adjustable speech speed
-- WAV and MP3 output formats
+- Split output into chapters or chunks
+- Memory-efficient chapter-by-chapter processing for large books
+- Adjustable speech speed (0.5x to 2.0x)
+- WAV, MP3, and M4A output formats
 - Chapter merging capability
 - Detailed debug output option
-- GPU Support
+- GPU acceleration support (CUDA, TensorRT, ROCm, CoreML)
 
 ## Demo
 
@@ -34,7 +35,7 @@ https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
 
 ## Prerequisites
 
-- Python 3.9-3.12 (Python 3.13+ is not currently supported)
+- Python 3.10-3.13
 
 ## Installation
 
@@ -255,14 +256,17 @@ kokoro-tts <input_text_file> [<output_audio_file>] [options]
 ### Options
 
 - `--stream`: Stream audio instead of saving to file
-- `--speed <float>`: Set speech speed (default: 1.0)
+- `--speed <float>`: Set speech speed (default: 1.0, range: 0.5-2.0)
 - `--lang <str>`: Set language (default: en-us)
 - `--voice <str>`: Set voice or blend voices (default: interactive selection)
   - Single voice: Use voice name (e.g., "af_sarah")
   - Blended voices: Use "voice1:weight,voice2:weight" format
 - `--split-output <dir>`: Save each chunk as separate file in directory
-- `--format <str>`: Audio format: wav or mp3 (default: wav)
+- `--chapters <dir>`: Save one audio file per chapter in directory (memory efficient for books)
+- `--format <str>`: Audio format: wav, mp3, or m4a (default: wav)
 - `--debug`: Show detailed debug information during processing
+- `--model <path>`: Path to kokoro-v1.0.onnx model file (default: ./kokoro-v1.0.onnx)
+- `--voices <path>`: Path to voices-v1.0.bin file (default: ./voices-v1.0.bin)
 
 ### Input Formats
 
@@ -273,45 +277,97 @@ kokoro-tts <input_text_file> [<output_audio_file>] [options]
 
 ### Examples
 
+#### Basic Text-to-Speech
+
 ```bash
-# Basic usage with output file
+# Simple text file to audio
+kokoro-tts input.txt output.wav
+
+# With specific voice and speed
 kokoro-tts input.txt output.wav --speed 1.2 --lang en-us --voice af_sarah
 
-# Read from standard input (stdin)
+# Stream audio directly (no file saved)
+kokoro-tts input.txt --stream --speed 0.8
+
+# Using different output formats
+kokoro-tts input.txt output.mp3 --format mp3
+kokoro-tts input.txt output.m4a --format m4a
+```
+
+#### Standard Input (stdin)
+
+```bash
+# Read from stdin and stream
 echo "Hello World" | kokoro-tts - --stream
+
+# Pipe from file
 cat input.txt | kokoro-tts - output.wav
 
 # Cross-platform stdin support:
 # Linux/macOS: echo "text" | kokoro-tts - --stream
 # Windows: echo "text" | kokoro-tts - --stream
-# All platforms also support: kokoro-tts /dev/stdin --stream (Linux/macOS) or kokoro-tts CONIN$ --stream (Windows)
+```
 
-# Use voice blending (60-40 mix)
+#### Voice Blending
+
+```bash
+# Use voice blending with specific weights (60-40 mix)
 kokoro-tts input.txt output.wav --voice "af_sarah:60,am_adam:40"
 
 # Use equal voice blend (50-50)
 kokoro-tts input.txt --stream --voice "am_adam,af_sarah"
 
-# Process EPUB and split into chunks
+# Three-way blend is also supported
+kokoro-tts input.txt output.wav --voice "af_sarah:50,am_adam:30,af_bella:20"
+```
+
+#### EPUB Book Processing
+
+```bash
+# Process EPUB book with chapters (memory efficient, recommended)
+kokoro-tts input.epub --chapters ./audiobook/ --format m4a
+
+# Process EPUB and split into small chunks
 kokoro-tts input.epub --split-output ./chunks/ --format mp3
 
-# Stream audio directly
-kokoro-tts input.txt --stream --speed 0.8
-
-# Merge existing chunks
-kokoro-tts --merge-chunks --split-output ./chunks/ --format wav
-
 # Process EPUB with detailed debug output
-kokoro-tts input.epub --split-output ./chunks/ --debug
+kokoro-tts input.epub --chapters ./audiobook/ --debug --format m4a
+```
 
-# Process PDF and split into chapters
+#### PDF Document Processing
+
+```bash
+# Process PDF with chapter detection
+kokoro-tts input.pdf --chapters ./chapters/ --format m4a
+
+# Process PDF with specific voice and speed
+kokoro-tts input.pdf output.m4a --speed 1.2 --lang en-us --voice af_sarah --format m4a
+
+# Process PDF and split into chunks
 kokoro-tts input.pdf --split-output ./chunks/ --format mp3
+```
 
-# List available voices
+#### Custom Model Paths
+
+```bash
+# Use custom model and voices files
+kokoro-tts input.txt output.wav --model /path/to/model.onnx --voices /path/to/voices.bin
+
+# Use models from a specific directory
+kokoro-tts input.txt output.wav --model ./models/kokoro-v1.0.onnx --voices ./models/voices-v1.0.bin
+```
+
+#### Utility Commands
+
+```bash
+# List all available voices
 kokoro-tts --help-voices
 
-# List supported languages
+# List all supported languages
 kokoro-tts --help-languages
+
+# Merge existing chunks into chapter files
+kokoro-tts --merge-chunks --split-output ./chunks/ --format wav
 ```
 
 > [!TIP]
@@ -334,10 +390,11 @@ kokoro-tts --help-languages
 - Handles interruptions gracefully
 
 ### Output Options
-- Single file output
-- Split output with chapter organization
-- Chunk merging capability
-- Multiple audio format support
+- Single file output (entire book/document in one file)
+- `--chapters` mode: One file per chapter (memory efficient, recommended for books)
+- `--split-output` mode: Many small chunk files with chapter organization
+- Chunk merging capability with `--merge-chunks`
+- Multiple audio format support: WAV, MP3, M4A
 
 ### Debug Mode
 - Shows detailed information about file processing

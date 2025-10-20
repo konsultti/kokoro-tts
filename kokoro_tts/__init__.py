@@ -26,6 +26,20 @@ from pydub import AudioSegment
 warnings.filterwarnings("ignore", category=UserWarning, module='ebooklib')
 warnings.filterwarnings("ignore", category=FutureWarning, module='ebooklib')
 
+# Supported languages (hardcoded as kokoro-onnx 0.4.9+ doesn't expose get_languages())
+SUPPORTED_LANGUAGES = [
+    'en-us',   # American English
+    'en-gb',   # British English
+    'ja',      # Japanese
+    'zh',      # Mandarin Chinese
+    'ko',      # Korean
+    'es',      # Spanish
+    'fr',      # French
+    'hi',      # Hindi
+    'it',      # Italian
+    'pt-br',   # Brazilian Portuguese
+]
+
 # Global flag to stop the spinner and audio
 stop_spinner = False
 stop_audio = False
@@ -249,17 +263,16 @@ def save_audio_with_format(samples, sample_rate, output_file, format):
             # Clean up temporary WAV file
             os.remove(temp_wav_path)
 
-def validate_language(lang, kokoro):
-    """Validate if the language is supported."""
-    try:
-        supported_languages = set(kokoro.get_languages())  # Get supported languages from Kokoro
-        if lang not in supported_languages:
-            supported_langs = ', '.join(sorted(supported_languages))
-            raise ValueError(f"Unsupported language: {lang}\nSupported languages are: {supported_langs}")
-        return lang
-    except Exception as e:
-        print(f"Error getting supported languages: {e}")
-        sys.exit(1)
+def validate_language(lang, kokoro=None):
+    """Validate if the language is supported.
+
+    Note: kokoro parameter is kept for backward compatibility but not used.
+    Languages are now hardcoded as kokoro-onnx 0.4.9+ doesn't expose get_languages().
+    """
+    if lang not in SUPPORTED_LANGUAGES:
+        supported_langs = ', '.join(sorted(SUPPORTED_LANGUAGES))
+        raise ValueError(f"Unsupported language: {lang}\nSupported languages are: {supported_langs}")
+    return lang
 
 def print_usage():
     print("""
@@ -306,18 +319,16 @@ Examples:
     """)
 
 def print_supported_languages(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
-    """Print all supported languages from Kokoro."""
-    check_required_files(model_path, voices_path)
-    try:
-        kokoro = Kokoro(model_path, voices_path)
-        languages = sorted(kokoro.get_languages())
-        print("\nSupported languages:")
-        for lang in languages:
-            print(f"    {lang}")
-        print()
-    except Exception as e:
-        print(f"Error loading model to get supported languages: {e}")
-        sys.exit(1)
+    """Print all supported languages.
+
+    Note: model_path and voices_path parameters are kept for backward compatibility
+    but not used. Languages are now hardcoded as kokoro-onnx 0.4.9+ doesn't expose
+    get_languages().
+    """
+    print("\nSupported languages:")
+    for lang in sorted(SUPPORTED_LANGUAGES):
+        print(f"    {lang}")
+    print()
 
 def print_supported_voices(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     """Print all supported voices from Kokoro."""

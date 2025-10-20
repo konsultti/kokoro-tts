@@ -8,10 +8,11 @@ Kokoro TTS is a CLI text-to-speech tool using the Kokoro ONNX model. It supports
 
 **Key characteristics:**
 - Single-file architecture: All core functionality is in `kokoro_tts/__init__.py` (~1400 lines)
-- Python 3.9-3.12 support (3.13+ not supported due to dependencies)
+- Python 3.10-3.13 support
 - Published to PyPI as `kokoro-tts`
 - Uses `uv` as the preferred package manager
 - Depends on external model files (`kokoro-v1.0.onnx` and `voices-v1.0.bin`)
+- Uses kokoro-onnx 0.4.9 with hardcoded language support
 
 ## Development Commands
 
@@ -148,10 +149,15 @@ Voices can be blended by:
 **Dependencies** (pyproject.toml):
 - `beautifulsoup4`: HTML parsing for EPUB
 - `ebooklib`: EPUB file handling
-- `kokoro-onnx==0.3.9`: Core TTS model (pinned version)
+- `kokoro-onnx==0.4.9`: Core TTS model (pinned version)
 - `pymupdf` + `pymupdf4llm`: PDF processing
 - `sounddevice` + `soundfile`: Audio I/O
 - Development: `build`, `twine` for PyPI publishing
+
+**Important Notes:**
+- Language support is hardcoded in `SUPPORTED_LANGUAGES` constant (lines 29-41)
+- kokoro-onnx 0.4.9 no longer exposes `get_languages()` API
+- Supported languages: en-us, en-gb, ja, zh, ko, es, fr, hi, it, pt-br
 
 **Entry Point:**
 - Script name: `kokoro-tts`
@@ -205,8 +211,9 @@ Follow PEP 8 with these conventions observed in the codebase:
 
 ## Known Constraints
 
-- Python 3.13+ not supported (dependency limitation)
+- Python 3.9 not supported (requires 3.10+)
 - Model has phoneme length limit (~510 tokens)
 - Model files must be in working directory or specified via `--model` and `--voices`
 - No automated test suite (manual testing only)
 - Single-threaded audio generation (no parallel chunk processing)
+- Language list is hardcoded and not dynamically retrieved from kokoro-onnx
