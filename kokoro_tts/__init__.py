@@ -21,6 +21,7 @@ import sounddevice as sd
 from kokoro_onnx import Kokoro
 import pymupdf4llm
 import fitz
+from pydub import AudioSegment
 
 warnings.filterwarnings("ignore", category=UserWarning, module='ebooklib')
 warnings.filterwarnings("ignore", category=FutureWarning, module='ebooklib')
@@ -28,6 +29,88 @@ warnings.filterwarnings("ignore", category=FutureWarning, module='ebooklib')
 # Global flag to stop the spinner and audio
 stop_spinner = False
 stop_audio = False
+
+def check_gpu_availability():
+    """Check if GPU is available and provide helpful information."""
+    import importlib.metadata
+    import onnxruntime as ort
+
+    # Get available providers from onnxruntime
+    available_providers = ort.get_available_providers()
+
+    has_cuda = 'CUDAExecutionProvider' in available_providers
+    has_tensorrt = 'TensorrtExecutionProvider' in available_providers
+    has_rocm = 'ROCMExecutionProvider' in available_providers
+    has_coreml = 'CoreMLExecutionProvider' in available_providers
+
+    onnx_provider_env = os.getenv('ONNX_PROVIDER')
+
+    try:
+        # Check if onnxruntime-gpu is installed
+        gpu_version = importlib.metadata.version('onnxruntime-gpu')
+
+        return {
+            'gpu_package_installed': True,
+            'gpu_package_version': gpu_version,
+            'available_providers': available_providers,
+            'has_cuda': has_cuda,
+            'has_tensorrt': has_tensorrt,
+            'has_rocm': has_rocm,
+            'has_coreml': has_coreml,
+            'env_provider': onnx_provider_env,
+            'will_use_gpu': onnx_provider_env in ['CUDAExecutionProvider', 'TensorrtExecutionProvider', 'ROCMExecutionProvider', 'CoreMLExecutionProvider'] if onnx_provider_env else False
+        }
+    except importlib.metadata.PackageNotFoundError:
+        # onnxruntime-gpu not installed, but check if standard onnxruntime has CoreML
+        return {
+            'gpu_package_installed': False,
+            'gpu_package_version': None,
+            'available_providers': available_providers,
+            'has_cuda': has_cuda,
+            'has_tensorrt': has_tensorrt,
+            'has_rocm': has_rocm,
+            'has_coreml': has_coreml,
+            'env_provider': onnx_provider_env,
+            'will_use_gpu': onnx_provider_env == 'CoreMLExecutionProvider' if onnx_provider_env else False
+        }
+
+def print_gpu_info(gpu_info, auto_enabled=False):
+    """Print GPU availability information."""
+    if gpu_info['env_provider']:
+        if auto_enabled:
+            print(f"GPU acceleration: Using {gpu_info['env_provider']} (auto-enabled)")
+        else:
+            print(f"GPU acceleration: Using {gpu_info['env_provider']} (set via ONNX_PROVIDER)")
+        return
+
+    # Check for available acceleration providers
+    providers = []
+    if gpu_info['has_cuda']:
+        providers.append('CUDA')
+    if gpu_info['has_tensorrt']:
+        providers.append('TensorRT')
+    if gpu_info['has_rocm']:
+        providers.append('ROCm')
+    if gpu_info['has_coreml']:
+        providers.append('CoreML')
+
+    if providers:
+        print(f"GPU acceleration: Available ({', '.join(providers)}) but not enabled")
+        print("  To enable acceleration, set environment variable:")
+        if gpu_info['has_coreml']:
+            print("    export ONNX_PROVIDER=CoreMLExecutionProvider  # For Apple Silicon (M1/M2/M3)")
+        if gpu_info['has_cuda']:
+            print("    export ONNX_PROVIDER=CUDAExecutionProvider")
+        if gpu_info['has_tensorrt']:
+            print("    export ONNX_PROVIDER=TensorrtExecutionProvider")
+        if gpu_info['has_rocm']:
+            print("    export ONNX_PROVIDER=ROCMExecutionProvider")
+    elif gpu_info['gpu_package_installed']:
+        print("GPU acceleration: onnxruntime-gpu installed but no GPU detected")
+    else:
+        print("GPU acceleration: Not available")
+        print("  CUDA/ROCm users: pip install onnxruntime-gpu")
+        print("  Apple Silicon users: CoreML support available in standard onnxruntime")
 
 def check_required_files(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     """Check if required model files exist and provide helpful error messages."""
@@ -90,20 +173,20 @@ def chunk_text(text, initial_chunk_size=1000):
     current_chunk = []
     current_size = 0
     chunk_size = initial_chunk_size
-    
+
     for sentence in sentences:
         if not sentence.strip():
             continue  # Skip empty sentences
-        
+
         sentence = sentence.strip() + '.'
         sentence_size = len(sentence)
-        
+
         # If a single sentence is too long, split it into smaller pieces
         if sentence_size > chunk_size:
             words = sentence.split()
             current_piece = []
             current_piece_size = 0
-            
+
             for word in words:
                 word_size = len(word) + 1  # +1 for space
                 if current_piece_size + word_size > chunk_size:
@@ -114,24 +197,57 @@ def chunk_text(text, initial_chunk_size=1000):
                 else:
                     current_piece.append(word)
                     current_piece_size += word_size
-            
+
             if current_piece:
                 chunks.append(' '.join(current_piece).strip() + '.')
             continue
-        
+
         # Start new chunk if current one would be too large
         if current_size + sentence_size > chunk_size and current_chunk:
             chunks.append(' '.join(current_chunk))
             current_chunk = []
             current_size = 0
-        
+
         current_chunk.append(sentence)
         current_size += sentence_size
-    
+
     if current_chunk:
         chunks.append(' '.join(current_chunk))
-    
+
     return chunks
+
+def save_audio_with_format(samples, sample_rate, output_file, format):
+    """Save audio samples to file with specified format.
+
+    Args:
+        samples: Audio sample data
+        sample_rate: Sample rate (Hz)
+        output_file: Output file path
+        format: Output format ('wav', 'mp3', or 'm4a')
+    """
+    if format == 'wav':
+        # Direct WAV output
+        sf.write(output_file, samples, sample_rate)
+    elif format in ['mp3', 'm4a']:
+        # Convert to MP3 or M4A via pydub
+        import tempfile
+
+        # First save as temporary WAV file
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
+            temp_wav_path = temp_wav.name
+            sf.write(temp_wav_path, samples, sample_rate)
+
+        try:
+            # Load WAV and convert to target format
+            audio = AudioSegment.from_wav(temp_wav_path)
+
+            if format == 'mp3':
+                audio.export(output_file, format='mp3', bitrate='128k')
+            elif format == 'm4a':
+                audio.export(output_file, format='mp4', codec='aac', bitrate='128k')
+        finally:
+            # Clean up temporary WAV file
+            os.remove(temp_wav_path)
 
 def validate_language(lang, kokoro):
     """Validate if the language is supported."""
@@ -161,7 +277,8 @@ Options:
     --lang <str>        Set language (default: en-us)
     --voice <str>       Set voice or blend voices (default: interactive selection)
     --split-output <dir> Save each chunk as separate file in directory
-    --format <str>      Audio format: wav or mp3 (default: wav)
+    --chapters <dir>    Save one audio file per chapter in directory (memory efficient)
+    --format <str>      Audio format: wav, mp3, or m4a (default: wav)
     --debug             Show detailed debug information
     --model <path>      Path to kokoro-v1.0.onnx model file (default: ./kokoro-v1.0.onnx)
     --voices <path>     Path to voices-v1.0.bin file (default: ./voices-v1.0.bin)
@@ -173,9 +290,10 @@ Input formats:
 
 Examples:
     kokoro-tts input.txt output.wav --speed 1.2 --lang en-us --voice af_sarah
-    kokoro-tts input.epub --split-output ./chunks/ --format mp3
-    kokoro-tts input.pdf output.wav --speed 1.2 --lang en-us --voice af_sarah
-    kokoro-tts input.pdf --split-output ./chunks/ --format mp3
+    kokoro-tts input.epub --chapters ./audiobook/ --format m4a  # One file per chapter
+    kokoro-tts input.epub --split-output ./chunks/ --format mp3  # Many small files
+    kokoro-tts input.pdf output.m4a --speed 1.2 --lang en-us --voice af_sarah --format m4a
+    kokoro-tts input.pdf --chapters ./chapters/ --format m4a
     kokoro-tts input.txt --stream --speed 0.8
     kokoro-tts input.txt output.wav --voice "af_sarah:60,am_adam:40"
     kokoro-tts input.txt --stream --voice "am_adam,af_sarah" # 50-50 blend
@@ -348,7 +466,7 @@ def extract_chapters_from_epub(epub_file, debug=False):
                 if doc:
                     content = doc.get_content().decode('utf-8')
                     soup = BeautifulSoup(content, "html.parser")
-                    
+
                     # If no fragment ID, get whole document content
                     if not fragment_id:
                         text_content = soup.get_text().strip()
@@ -360,10 +478,14 @@ def extract_chapters_from_epub(epub_file, debug=False):
                             next_href_parts = next_item.href.split('#')
                             if next_href_parts[0] == file_name and len(next_href_parts) > 1:
                                 next_fragment = next_href_parts[1]
-                        
+
                         # Extract content between fragments
                         text_content = get_chapter_content(soup, fragment_id, next_fragment)
-                    
+
+                    # Clean up soup object to free memory
+                    soup.decompose()
+                    del soup, content
+
                     if text_content:
                         chapters.append({
                             'title': item.title,
@@ -394,35 +516,35 @@ def extract_chapters_from_epub(epub_file, debug=False):
         for doc in docs:
             if debug:
                 print(f"Processing document: {doc.file_name}")
-            
+
             content = doc.get_content().decode('utf-8')
             soup = BeautifulSoup(content, "html.parser")
-            
+
             # Try to find chapter divisions
             chapter_divs = soup.find_all(['h1', 'h2', 'h3'], class_=lambda x: x and 'chapter' in x.lower())
             if not chapter_divs:
-                chapter_divs = soup.find_all(lambda tag: tag.name in ['h1', 'h2', 'h3'] and 
+                chapter_divs = soup.find_all(lambda tag: tag.name in ['h1', 'h2', 'h3'] and
                                           ('chapter' in tag.get_text().lower() or
                                            'book' in tag.get_text().lower()))
-            
+
             if chapter_divs:
                 # Process each chapter division
                 for i, div in enumerate(chapter_divs):
                     title = div.get_text().strip()
-                    
+
                     # Get content until next chapter heading or end
-                    content = ''
+                    chapter_content = ''
                     for tag in div.find_next_siblings():
                         if tag.name in ['h1', 'h2', 'h3'] and (
                             'chapter' in tag.get_text().lower() or
                             'book' in tag.get_text().lower()):
                             break
-                        content += tag.get_text() + '\n'
-                    
-                    if content.strip():
+                        chapter_content += tag.get_text() + '\n'
+
+                    if chapter_content.strip():
                         chapters.append({
                             'title': title,
-                            'content': content.strip(),
+                            'content': chapter_content.strip(),
                             'order': len(chapters) + 1
                         })
                         if debug:
@@ -434,7 +556,7 @@ def extract_chapters_from_epub(epub_file, debug=False):
                     # Try to find a title
                     title_tag = soup.find(['h1', 'h2', 'title'])
                     title = title_tag.get_text().strip() if title_tag else f"Chapter {len(chapters) + 1}"
-                    
+
                     if title.lower() not in ['copy', 'copyright', 'title page', 'cover']:
                         chapters.append({
                             'title': title,
@@ -443,6 +565,10 @@ def extract_chapters_from_epub(epub_file, debug=False):
                         })
                         if debug:
                             print(f"Added chapter: {title}")
+
+            # Clean up soup object to free memory after processing each document
+            soup.decompose()
+            del soup, content
     
     # Print summary
     if chapters:
@@ -807,8 +933,8 @@ def process_chunk_sequential(chunk: str, kokoro: Kokoro, voice: str, speed: floa
         
         return None, None
 
-def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, lang="en-us", 
-                         stream=False, split_output=None, format="wav", debug=False, stdin_indicators=None,
+def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, lang="en-us",
+                         stream=False, split_output=None, chapters_output=None, format="wav", debug=False, stdin_indicators=None,
                          model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     global stop_spinner
     
@@ -821,6 +947,19 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
     
     # Load Kokoro model
     try:
+        # Check and display GPU availability before loading model
+        gpu_info = check_gpu_availability()
+
+        # Auto-enable CoreML on macOS if available and no provider is set
+        auto_enabled = False
+        if gpu_info['has_coreml'] and not gpu_info['env_provider']:
+            os.environ['ONNX_PROVIDER'] = 'CoreMLExecutionProvider'
+            gpu_info['env_provider'] = 'CoreMLExecutionProvider'
+            auto_enabled = True
+
+        print_gpu_info(gpu_info, auto_enabled)
+        print()  # Blank line for readability
+
         kokoro = Kokoro(model_path, voices_path)
 
         # Validate language after loading model
@@ -935,7 +1074,227 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
             chunks = chunk_text(chapter['content'], initial_chunk_size=1000)
             asyncio.run(stream_audio(kokoro, chapter['content'], voice, speed, lang, debug))
     else:
-        if split_output:
+        if chapters_output:
+            # Chapter-based output: One file per chapter (memory efficient)
+            os.makedirs(chapters_output, exist_ok=True)
+
+            for chapter_num, chapter in enumerate(chapters, 1):
+                # Create sanitized filename from chapter title
+                safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in chapter['title'])
+                safe_title = safe_title[:100]  # Limit length
+                chapter_file = os.path.join(chapters_output, f"Chapter_{chapter_num:03d}_{safe_title}.{format}")
+
+                # Skip if chapter file already exists
+                if os.path.exists(chapter_file):
+                    print(f"\nSkipping {chapter['title']}: Already exists")
+                    continue
+
+                print(f"\nProcessing: {chapter['title']}")
+                chunks = chunk_text(chapter['content'], initial_chunk_size=1000)
+                total_chunks = len(chunks)
+
+                # Use temporary files per chapter to avoid memory accumulation
+                import tempfile
+                temp_chunk_files = []
+                sample_rate = None
+                processed_chunks = 0
+
+                for chunk_num, chunk in enumerate(chunks, 1):
+                    if stop_audio:  # Check for interruption
+                        break
+
+                    # Create progress indicator
+                    filled = "■" * processed_chunks
+                    remaining = "□" * (total_chunks - processed_chunks)
+                    progress_bar = f"[{filled}{remaining}] ({processed_chunks}/{total_chunks})"
+
+                    stop_spinner = False
+                    spinner_thread = threading.Thread(
+                        target=spinning_wheel,
+                        args=(f"Processing chunk {chunk_num}/{total_chunks}", progress_bar)
+                    )
+                    spinner_thread.start()
+
+                    try:
+                        samples, sr = process_chunk_sequential(
+                            chunk, kokoro, voice, speed, lang,
+                            retry_count=0, debug=debug
+                        )
+                        if samples is not None:
+                            if sample_rate is None:
+                                sample_rate = sr
+
+                            # Write chunk to temporary WAV file
+                            temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                            temp_file.close()
+                            sf.write(temp_file.name, samples, sr)
+                            temp_chunk_files.append(temp_file.name)
+                            processed_chunks += 1
+                    except Exception as e:
+                        print(f"\nError processing chunk {chunk_num}: {e}")
+
+                    stop_spinner = True
+                    spinner_thread.join()
+
+                # Merge chunks into chapter file
+                if temp_chunk_files and not stop_audio:
+                    print(f"\nMerging {len(temp_chunk_files)} chunks into chapter file...")
+
+                    if format == "wav":
+                        # Concatenate WAV files directly (memory efficient)
+                        with sf.SoundFile(chapter_file, mode='w', samplerate=sample_rate,
+                                         channels=1, subtype='PCM_16') as outfile:
+                            for temp_file in temp_chunk_files:
+                                try:
+                                    data, sr = sf.read(temp_file)
+                                    outfile.write(data)
+                                    os.unlink(temp_file)
+                                except Exception as e:
+                                    print(f"\nError reading temporary file: {e}")
+                                    try:
+                                        os.unlink(temp_file)
+                                    except:
+                                        pass
+                    else:
+                        # For MP3/M4A, accumulate samples for this chapter only (manageable size)
+                        all_samples = []
+                        for temp_file in temp_chunk_files:
+                            try:
+                                data, sr = sf.read(temp_file)
+                                all_samples.extend(data)
+                                os.unlink(temp_file)
+                            except Exception as e:
+                                print(f"\nError reading temporary file: {e}")
+                                try:
+                                    os.unlink(temp_file)
+                                except:
+                                    pass
+
+                        save_audio_with_format(all_samples, sample_rate, chapter_file, format)
+
+                    print(f"Saved: {chapter_file}")
+                elif stop_audio:
+                    # Clean up temp files if interrupted
+                    for temp_file in temp_chunk_files:
+                        try:
+                            os.unlink(temp_file)
+                        except:
+                            pass
+                    break
+
+                print(f"\nCompleted {chapter['title']}: {processed_chunks}/{total_chunks} chunks processed")
+
+            if not stop_audio:
+                print(f"\nCreated {len(chapters)} chapter files in {chapters_output}/")
+
+                # Combine all chapters into a single audiobook file
+                print(f"\nCombining all chapters into single audiobook...")
+                chapter_files = sorted([
+                    os.path.join(chapters_output, f)
+                    for f in os.listdir(chapters_output)
+                    if f.startswith("Chapter_") and f.endswith(f".{format}")
+                ])
+
+                if chapter_files:
+                    # Generate audiobook filename from input file
+                    if input_file not in stdin_indicators:
+                        book_name = os.path.splitext(os.path.basename(input_file))[0]
+                    else:
+                        book_name = "audiobook"
+
+                    audiobook_file = os.path.join(chapters_output, f"{book_name}_Complete.{format}")
+
+                    if format == "wav":
+                        # Concatenate WAV files directly (memory efficient)
+                        print(f"Merging {len(chapter_files)} chapters...")
+                        with sf.SoundFile(audiobook_file, mode='w', samplerate=sample_rate,
+                                         channels=1, subtype='PCM_16') as outfile:
+                            for i, chapter_file in enumerate(chapter_files, 1):
+                                try:
+                                    data, sr = sf.read(chapter_file)
+                                    outfile.write(data)
+                                    print(f"  Merged chapter {i}/{len(chapter_files)}", end='\r')
+                                except Exception as e:
+                                    print(f"\nError reading chapter file {chapter_file}: {e}")
+                        print()  # New line after progress
+                    else:
+                        # For MP3/M4A, use FFmpeg directly to avoid memory issues with large files
+                        # pydub's export() creates intermediate WAV files which can exceed 4GB limit
+                        import subprocess
+
+                        print(f"Merging {len(chapter_files)} chapters...")
+
+                        # Create a temporary file list for FFmpeg concat demuxer
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                            filelist_path = f.name
+                            for chapter_file in chapter_files:
+                                # FFmpeg concat demuxer requires absolute paths
+                                abs_path = os.path.abspath(chapter_file)
+                                # Escape single quotes for FFmpeg
+                                escaped_path = abs_path.replace("'", "'\\''")
+                                f.write(f"file '{escaped_path}'\n")
+
+                        try:
+                            print(f"Combining chapters using FFmpeg (memory efficient)...")
+
+                            # Build FFmpeg command for concat
+                            if format == 'm4a':
+                                # For M4A: concat using concat demuxer, re-encode to AAC
+                                ffmpeg_cmd = [
+                                    'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                                    '-i', filelist_path,
+                                    '-c:a', 'aac', '-b:a', '128k',
+                                    audiobook_file
+                                ]
+                            else:  # mp3
+                                # For MP3: concat using concat demuxer, copy codec (no re-encode)
+                                ffmpeg_cmd = [
+                                    'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                                    '-i', filelist_path,
+                                    '-c', 'copy',
+                                    audiobook_file
+                                ]
+
+                            # Run FFmpeg
+                            result = subprocess.run(
+                                ffmpeg_cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True
+                            )
+
+                            if result.returncode != 0:
+                                print(f"\nFFmpeg error: {result.stderr}")
+                                raise Exception(f"FFmpeg failed with return code {result.returncode}")
+
+                            print(f"Successfully merged {len(chapter_files)} chapters")
+
+                        finally:
+                            # Clean up temporary file list
+                            if os.path.exists(filelist_path):
+                                os.unlink(filelist_path)
+
+                    print(f"\nComplete audiobook saved: {audiobook_file}")
+
+                    # Calculate total duration
+                    try:
+                        if format == "wav":
+                            data, sr = sf.read(audiobook_file)
+                            duration_sec = len(data) / sr
+                        else:
+                            # Use 'mp4' format for m4a files (FFmpeg requirement)
+                            load_format = 'mp4' if format == 'm4a' else format
+                            audio = AudioSegment.from_file(audiobook_file, format=load_format)
+                            duration_sec = len(audio) / 1000.0
+
+                        hours = int(duration_sec // 3600)
+                        minutes = int((duration_sec % 3600) // 60)
+                        seconds = int(duration_sec % 60)
+                        print(f"Total duration: {hours}h {minutes}m {seconds}s")
+                    except:
+                        pass
+        elif split_output:
             os.makedirs(split_output, exist_ok=True)
             
             for chapter_num, chapter in enumerate(chapters, 1):
@@ -993,11 +1352,11 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                     
                     try:
                         samples, sample_rate = process_chunk_sequential(
-                            chunk, kokoro, voice, speed, lang, 
+                            chunk, kokoro, voice, speed, lang,
                             retry_count=0, debug=debug  # Add retry parameters
                         )
                         if samples is not None:
-                            sf.write(chunk_file, samples, sample_rate)
+                            save_audio_with_format(samples, sample_rate, chunk_file, format)
                             processed_chunks += 1
                     except Exception as e:
                         print(f"\nError processing chunk {chunk_num}: {e}")
@@ -1016,26 +1375,28 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
             print(f"\nCreated audio files for {len(chapters)} chapters in {split_output}/")
         else:
             # Combine all chapters into one file
-            all_samples = []
+            # Use temporary files to avoid memory accumulation
+            import tempfile
+            temp_chunk_files = []
             sample_rate = None
-            
+
             for chapter_num, chapter in enumerate(chapters, 1):
                 print(f"\nProcessing: {chapter['title']}")
                 chunks = chunk_text(chapter['content'], initial_chunk_size=1000)
                 processed_chunks = 0
                 total_chunks = len(chunks)
-                
+
                 for chunk_num, chunk in enumerate(chunks, 1):
                     if stop_audio:  # Check for interruption
                         break
-                    
+
                     stop_spinner = False
                     spinner_thread = threading.Thread(
                         target=spinning_wheel,
                         args=(f"Processing chunk {chunk_num}/{total_chunks}",)
                     )
                     spinner_thread.start()
-                    
+
                     try:
                         samples, sr = process_chunk_sequential(
                             chunk, kokoro, voice, speed, lang,
@@ -1044,21 +1405,76 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                         if samples is not None:
                             if sample_rate is None:
                                 sample_rate = sr
-                            all_samples.extend(samples)
+
+                            # Write chunk to temporary WAV file to avoid memory accumulation
+                            temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                            temp_file.close()
+                            sf.write(temp_file.name, samples, sr)
+                            temp_chunk_files.append(temp_file.name)
                             processed_chunks += 1
                     except Exception as e:
                         print(f"\nError processing chunk {chunk_num}: {e}")
-                    
+
                     stop_spinner = True
                     spinner_thread.join()
-                
+
                 print(f"\nCompleted {chapter['title']}: {processed_chunks}/{total_chunks} chunks processed")
-            
-            if all_samples:
-                print("\nSaving complete audio file...")
+
+            if temp_chunk_files:
+                print("\nMerging audio chunks...")
                 if not output_file:
                     output_file = f"{os.path.splitext(input_file)[0]}.{format}"
-                sf.write(output_file, all_samples, sample_rate)
+
+                # For WAV output, we can concatenate efficiently
+                # For other formats, we need to accumulate and convert
+                if format == "wav":
+                    # Concatenate WAV files directly using soundfile
+                    # This is memory efficient as we write incrementally
+                    with sf.SoundFile(output_file, mode='w', samplerate=sample_rate,
+                                     channels=1, subtype='PCM_16') as outfile:
+                        for i, temp_file in enumerate(temp_chunk_files):
+                            try:
+                                data, sr = sf.read(temp_file)
+                                outfile.write(data)
+
+                                # Clean up temp file immediately after reading
+                                os.unlink(temp_file)
+
+                                # Show progress
+                                if (i + 1) % 10 == 0 or i == len(temp_chunk_files) - 1:
+                                    print(f"Merged {i + 1}/{len(temp_chunk_files)} chunks...", end='\r')
+                            except Exception as e:
+                                print(f"\nError reading temporary file {temp_file}: {e}")
+                                try:
+                                    os.unlink(temp_file)
+                                except:
+                                    pass
+                else:
+                    # For MP3/M4A, need to accumulate all samples for format conversion
+                    all_samples = []
+                    for i, temp_file in enumerate(temp_chunk_files):
+                        try:
+                            data, sr = sf.read(temp_file)
+                            all_samples.extend(data)
+
+                            # Clean up temp file immediately after reading
+                            os.unlink(temp_file)
+
+                            # Show progress
+                            if (i + 1) % 10 == 0 or i == len(temp_chunk_files) - 1:
+                                print(f"Merged {i + 1}/{len(temp_chunk_files)} chunks...", end='\r')
+                        except Exception as e:
+                            print(f"\nError reading temporary file {temp_file}: {e}")
+                            try:
+                                os.unlink(temp_file)
+                            except:
+                                pass
+
+                    print()  # New line after progress
+                    print("\nSaving complete audio file...")
+                    save_audio_with_format(all_samples, sample_rate, output_file, format)
+
+                print()  # New line after progress
                 print(f"Created {output_file}")
 
 async def stream_audio(kokoro, text, voice, speed, lang, debug=False):
@@ -1207,9 +1623,9 @@ def merge_chunks_to_chapters(split_output_dir, format="wav"):
             try:
                 # Ensure all_samples is a numpy array
                 all_samples = np.array(all_samples)
-                
+
                 # Save merged audio
-                sf.write(merged_file, all_samples, sample_rate)
+                save_audio_with_format(all_samples, sample_rate, merged_file, format)
                 print(f"Successfully merged {processed_chunks}/{total_chunks} chunks")
                 
                 # Verify the output file
@@ -1237,6 +1653,7 @@ def get_valid_options():
         '--lang',
         '--voice',
         '--split-output',
+        '--chapters',
         '--format',
         '--debug',
         '--model',
@@ -1262,7 +1679,7 @@ def main():
         if arg.startswith('--') and arg not in valid_options:
             unknown_options.append(arg)
             # Skip the next argument if it's a value for an option that takes parameters
-        elif arg in {'--speed', '--lang', '--voice', '--split-output', '--format', '--model', '--voices'}:
+        elif arg in {'--speed', '--lang', '--voice', '--split-output', '--chapters', '--format', '--model', '--voices'}:
             i += 1
         i += 1
     
@@ -1325,11 +1742,12 @@ def main():
     lang = "en-us"  # default language
     voice = None  # default to interactive selection
     split_output = None
+    chapters_output = None
     format = "wav"  # default format
     merge_chunks = '--merge-chunks' in sys.argv
     model_path = "kokoro-v1.0.onnx"  # default model path
     voices_path = "voices-v1.0.bin"  # default voices path
-    
+
     # Parse optional arguments
     for i, arg in enumerate(sys.argv):
         if arg == '--speed' and i + 1 < len(sys.argv):
@@ -1344,16 +1762,25 @@ def main():
             voice = sys.argv[i + 1]
         elif arg == '--split-output' and i + 1 < len(sys.argv):
             split_output = sys.argv[i + 1]
+        elif arg == '--chapters' and i + 1 < len(sys.argv):
+            chapters_output = sys.argv[i + 1]
         elif arg == '--format' and i + 1 < len(sys.argv):
             format = sys.argv[i + 1].lower()
-            if format not in ['wav', 'mp3']:
-                print("Error: Format must be either 'wav' or 'mp3'")
+            if format not in ['wav', 'mp3', 'm4a']:
+                print("Error: Format must be either 'wav', 'mp3', or 'm4a'")
                 sys.exit(1)
         elif arg == '--model' and i + 1 < len(sys.argv):
             model_path = sys.argv[i + 1]
         elif arg == '--voices' and i + 1 < len(sys.argv):
             voices_path = sys.argv[i + 1]
     
+    # Validate mutually exclusive options
+    if split_output and chapters_output:
+        print("Error: Cannot use both --split-output and --chapters at the same time")
+        print("  --split-output: Creates many small chunk files")
+        print("  --chapters: Creates one file per chapter (recommended)")
+        sys.exit(1)
+
     # Handle merge chunks operation
     if merge_chunks:
         if not split_output:
@@ -1361,7 +1788,7 @@ def main():
             sys.exit(1)
         merge_chunks_to_chapters(split_output, format)
         sys.exit(0)
-    
+
     # Normal processing mode
     if not input_file:
         print("Error: Input file required for text-to-speech conversion")
@@ -1382,8 +1809,9 @@ def main():
     debug = '--debug' in sys.argv
     
     # Convert text to audio with debug flag
-    convert_text_to_audio(input_file, output_file, voice=voice, stream=stream, 
-                         speed=speed, lang=lang, split_output=split_output, 
+    convert_text_to_audio(input_file, output_file, voice=voice, stream=stream,
+                         speed=speed, lang=lang, split_output=split_output,
+                         chapters_output=chapters_output,
                          format=format, debug=debug, stdin_indicators=stdin_indicators,
                          model_path=model_path, voices_path=voices_path)
 

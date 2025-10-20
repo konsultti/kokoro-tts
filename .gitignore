@@ -10,8 +10,11 @@ test.*
 *.bkp
 *.wav
 *.mp3
+!samples/*.mp3
 book_audio/
 chunks/
+chapters/
+audiobook/
 
 *.npz
 *.bin
