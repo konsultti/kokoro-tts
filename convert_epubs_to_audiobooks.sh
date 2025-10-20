@@ -8,7 +8,7 @@
 # Example: ./convert_epubs_to_audiobooks.sh /mnt/e/LLM-stuff/sources/
 #
 
-set -e  # Exit on error
+set -euo pipefail  # Exit on error in pipeline, undefined vars
 
 # Default parameters
 CHAPTERS_DIR="./audiobook"
@@ -142,7 +142,7 @@ for i in "${!EPUB_FILES[@]}"; do
     if [ -f "$FINAL_OUTPUT" ]; then
         echo -e "${YELLOW}⊙ Audiobook already exists: $FINAL_OUTPUT${NC}"
         echo -e "${YELLOW}⊙ Skipping...${NC}"
-        ((SKIPPED++))
+        SKIPPED=$((SKIPPED + 1))
         continue
     fi
 
@@ -153,12 +153,18 @@ for i in "${!EPUB_FILES[@]}"; do
     echo -e "${GREEN}► Starting conversion...${NC}"
     START_TIME=$(date +%s)
 
-    if python -m kokoro_tts "$EPUB_FILE" --chapters "$CHAPTERS_DIR" --format "$FORMAT" --voice "$VOICE"; then
-        END_TIME=$(date +%s)
-        DURATION=$((END_TIME - START_TIME))
-        MINUTES=$((DURATION / 60))
-        SECONDS=$((DURATION % 60))
+    # Temporarily disable exit-on-error for this command to allow continuing to next book
+    set +e
+    python -m kokoro_tts "$EPUB_FILE" --chapters "$CHAPTERS_DIR" --format "$FORMAT" --voice "$VOICE"
+    KOKORO_EXIT_CODE=$?
+    set -e
 
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    MINUTES=$((DURATION / 60))
+    SECONDS=$((DURATION % 60))
+
+    if [ $KOKORO_EXIT_CODE -eq 0 ]; then
         # Move the complete audiobook to source directory
         if [ -f "$EXPECTED_OUTPUT" ]; then
             mv "$EXPECTED_OUTPUT" "$FINAL_OUTPUT"
@@ -176,19 +182,14 @@ for i in "${!EPUB_FILES[@]}"; do
                 echo -e "${GREEN}✓ Cleanup complete${NC}"
             fi
 
-            ((SUCCESSFUL++))
+            SUCCESSFUL=$((SUCCESSFUL + 1))
         else
             echo -e "${RED}✗ Error: Expected output file not found: $EXPECTED_OUTPUT${NC}"
-            ((FAILED++))
+            FAILED=$((FAILED + 1))
         fi
     else
-        END_TIME=$(date +%s)
-        DURATION=$((END_TIME - START_TIME))
-        MINUTES=$((DURATION / 60))
-        SECONDS=$((DURATION % 60))
-
-        echo -e "${RED}✗ Failed after ${MINUTES}m ${SECONDS}s${NC}"
-        ((FAILED++))
+        echo -e "${RED}✗ Failed after ${MINUTES}m ${SECONDS}s (exit code: $KOKORO_EXIT_CODE)${NC}"
+        FAILED=$((FAILED + 1))
     fi
 done
 
