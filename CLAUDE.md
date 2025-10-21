@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kokoro TTS is a CLI text-to-speech tool using the Kokoro ONNX model. It supports multiple languages and voices with blending capabilities, and can process various input formats including text files, EPUB books, and PDF documents.
+Kokoro TTS is a text-to-speech tool using the Kokoro ONNX model. It provides both a CLI and web UI for converting text to speech. Supports multiple languages and voices with blending capabilities, and can process various input formats including text files, EPUB books, and PDF documents.
 
 **Key characteristics:**
-- Single-file architecture: All core functionality is in `kokoro_tts/__init__.py` (~1400 lines)
+- **Dual interface**: CLI (`kokoro-tts`) and Web UI (`kokoro-tts-ui`)
+- **Refactored architecture**: Core logic in `kokoro_tts/core.py`, CLI in `kokoro_tts/__init__.py`, UI in `kokoro_tts/ui/`
 - Python 3.10-3.13 support
 - Published to PyPI as `kokoro-tts`
 - Uses `uv` as the preferred package manager
@@ -31,6 +32,7 @@ pip install -r requirements.txt
 
 ### Running the Application
 
+**CLI:**
 ```bash
 # When installed locally with -e flag
 uv run kokoro-tts --help
@@ -40,6 +42,18 @@ uv run -m kokoro_tts --help
 
 # With activated venv
 python -m kokoro_tts --help
+```
+
+**Web UI:**
+```bash
+# Install with UI dependencies
+pip install -e ".[ui]"
+
+# Launch the web interface
+uv run kokoro-tts-ui
+
+# Or run directly
+python -m kokoro_tts.ui.gradio_app
 ```
 
 ### Testing
@@ -75,10 +89,46 @@ python -m build
 
 ## Architecture
 
+### Project Structure
+
+```
+kokoro_tts/
+├── __init__.py          # Legacy CLI (backward compatible)
+├── core.py              # Core TTS engine and business logic
+└── ui/
+    ├── __init__.py
+    └── gradio_app.py    # Web UI implementation
+```
+
 ### Core Components
 
-**Main Module (`kokoro_tts/__init__.py`):**
-All functionality is implemented in a single file with these key components:
+**Core Engine (`kokoro_tts/core.py`):**
+Refactored business logic providing reusable TTS functionality:
+
+1. **KokoroEngine Class**
+   - `load_model()`: Initialize Kokoro ONNX model
+   - `get_voices()`: List available voices
+   - `validate_language()`, `validate_voice()`: Input validation
+   - `chunk_text()`: Smart text chunking at sentence boundaries
+   - `process_chunk()`: Process single chunk with auto-retry on phoneme errors
+   - `generate_audio()`: Synchronous audio generation from text
+   - `generate_audio_async()`: Async version for UI responsiveness
+   - `process_file()`: Process entire files (txt/epub/pdf)
+   - `process_file_async()`: Async file processing
+   - `stream_audio_async()`: Streaming audio generation
+   - `save_audio()`: Save audio to WAV/MP3/M4A
+   - `extract_chapters_from_epub()`, `extract_chapters_from_pdf()`: Document parsing
+
+2. **Data Classes**
+   - `Chapter`: Represents text chapter with title, content, order
+   - `ProcessingOptions`: Configuration for TTS (voice, speed, lang, format, debug)
+   - `AudioFormat`: Enum for WAV/MP3/M4A
+
+3. **Progress Callbacks**
+   - Engine accepts `progress_callback(message, current, total)` for UI updates
+
+**CLI Module (`kokoro_tts/__init__.py`):**
+Legacy CLI implementation (unchanged for backward compatibility):
 
 1. **Input Processing**
    - `extract_text_from_epub()`: Basic EPUB text extraction
@@ -159,9 +209,13 @@ Voices can be blended by:
 - kokoro-onnx 0.4.9 no longer exposes `get_languages()` API
 - Supported languages: en-us, en-gb, ja, zh, ko, es, fr, hi, it, pt-br
 
-**Entry Point:**
-- Script name: `kokoro-tts`
-- Points to: `kokoro_tts:main`
+**Entry Points:**
+- CLI: `kokoro-tts` → `kokoro_tts:main`
+- Web UI: `kokoro-tts-ui` → `kokoro_tts.ui.gradio_app:launch_ui`
+
+**Optional Dependencies:**
+- `ui`: Gradio web interface (`pip install 'kokoro-tts[ui]'`)
+  - `gradio>=4.0.0`: Web UI framework
 
 **Model Files:**
 Required files (not in repo, downloaded separately):
@@ -180,24 +234,65 @@ Follow PEP 8 with these conventions observed in the codebase:
 
 ## Common Workflows
 
+### Using the Web UI
+
+The Gradio web UI provides three main interfaces:
+
+1. **Quick Generate Tab**
+   - Simple text-to-speech conversion
+   - Select voice, adjust speed, choose language
+   - Generates audio directly in browser for playback
+
+2. **File Processing Tab**
+   - Upload .txt, .epub, or .pdf files
+   - Converts entire documents to audiobooks
+   - Downloads generated audio in WAV/MP3/M4A format
+
+3. **Voice Lab Tab**
+   - **Voice Preview**: Test individual voices with sample text
+   - **Voice Blending**: Mix two voices with adjustable weights
+   - Experiment with different voice combinations
+
+### Using the Core Engine Programmatically
+
+```python
+from kokoro_tts.core import KokoroEngine, ProcessingOptions, AudioFormat
+
+# Initialize engine
+engine = KokoroEngine(
+    model_path="kokoro-v1.0.onnx",
+    voices_path="voices-v1.0.bin"
+)
+engine.load_model()
+
+# Generate audio
+options = ProcessingOptions(
+    voice="af_sarah",
+    speed=1.2,
+    lang="en-us",
+    format=AudioFormat.WAV
+)
+
+samples, sample_rate = engine.generate_audio("Hello world!", options)
+engine.save_audio(samples, sample_rate, "output.wav", AudioFormat.WAV)
+
+# Or process a file
+engine.process_file("input.epub", "output.mp3", options)
+```
+
 ### Adding a New Input Format
 
-1. Add file extension check in `main()` after line 887
-2. Create extraction function (follow `extract_chapters_from_epub` pattern)
-3. Return list of dicts with `{'title': str, 'content': str, 'order': int}`
-4. Update usage docs in `print_usage()` and README.md
-
-### Adding a New CLI Option
-
-1. Add to `get_valid_options()` (line 1228)
-2. Add parsing logic in `main()` starting line 1334
-3. Thread through to `convert_text_to_audio()` (line 810)
-4. Update `print_usage()` (line 148) and README.md
+1. Add extraction method to `KokoroEngine` class in `core.py`
+2. Follow pattern of `extract_chapters_from_epub()` or `extract_chapters_from_pdf()`
+3. Return list of `Chapter` objects
+4. Update `process_file()` method to handle new extension
+5. Update CLI `main()` if needed for backward compatibility
+6. Update README.md with examples
 
 ### Modifying Audio Processing
 
-- Core logic is in `process_chunk_sequential()` (line 705)
-- Be careful with recursive subdivision logic
+- Core logic is in `KokoroEngine.process_chunk()` in `core.py`
+- Be careful with recursive subdivision logic (phoneme limit handling)
 - Test with long texts to trigger phoneme errors
 - Ensure sample rate consistency across chunks
 

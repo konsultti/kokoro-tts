@@ -1,23 +1,24 @@
 # Kokoro TTS
 
-A CLI text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents.
+A text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents.
+
+Available as both a **CLI** and **Web UI**.
 
 ![ngpt-s-c](https://raw.githubusercontent.com/nazdridoy/kokoro-tts/main/previews/kokoro-tts-h.png)
 
 ## Features
 
-- Multiple language and voice support (10 languages, 48+ voices)
-- Voice blending with customizable weights (2 or more voices)
-- EPUB, PDF and TXT file input support
-- Standard input (stdin) and `|` piping from other programs
-- Streaming audio playback
-- Split output into chapters or chunks
-- Memory-efficient chapter-by-chapter processing for large books
-- Adjustable speech speed (0.5x to 2.0x)
-- WAV, MP3, and M4A output formats
-- Chapter merging capability
-- Detailed debug output option
-- GPU acceleration support (CUDA, TensorRT, ROCm, CoreML)
+- 🎭 **Dual Interface**: Command-line tool + browser-based web UI
+- 🌍 **Multiple Languages**: 10 languages supported (en-us, en-gb, ja, zh, ko, es, fr, hi, it, pt-br)
+- 🎙️ **48+ Voices**: Wide variety of voices with blending capabilities
+- 🎨 **Voice Blending**: Mix 2+ voices with customizable weights
+- 📚 **Multiple Formats**: EPUB, PDF, and TXT file support
+- 🔄 **Streaming**: Real-time audio playback via CLI or web
+- 📖 **Smart Processing**: Chapter-by-chapter for large books (memory efficient)
+- ⚡ **Adjustable Speed**: 0.5x to 2.0x speech rate
+- 🎵 **Output Formats**: WAV, MP3, and M4A
+- 🚀 **GPU Acceleration**: CUDA, TensorRT, ROCm, CoreML support
+- 🖥️ **Web UI**: Easy-to-use Gradio interface with voice preview and blending
 
 ## Demo
 
@@ -31,7 +32,7 @@ https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
 
 - [x] Add GPU support
 - [x] Add PDF support
-- [ ] Add GUI
+- [x] Add GUI/Web UI
 
 ## Prerequisites
 
@@ -43,6 +44,7 @@ https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
 
 The easiest way to install Kokoro TTS is from PyPI:
 
+**CLI Only:**
 ```bash
 # Using uv (recommended)
 uv tool install kokoro-tts
@@ -51,9 +53,22 @@ uv tool install kokoro-tts
 pip install kokoro-tts
 ```
 
+**CLI + Web UI:**
+```bash
+# Using pip with UI dependencies
+pip install 'kokoro-tts[ui]'
+
+# Or with uv
+uv pip install 'kokoro-tts[ui]'
+```
+
 After installation, you can run:
 ```bash
+# CLI
 kokoro-tts --help
+
+# Web UI
+kokoro-tts-ui
 ```
 
 ### Method 2: Install from Git
@@ -235,7 +250,50 @@ kokoro-tts input.txt output.wav --voice af_sarah
 
 ## Usage
 
-### Basic Usage
+### Web UI (Recommended for Beginners)
+
+The easiest way to use Kokoro TTS is through the web interface:
+
+```bash
+# Launch the web UI (requires gradio)
+kokoro-tts-ui
+```
+
+This will start a local web server at `http://127.0.0.1:7860` with an easy-to-use interface featuring:
+
+**📝 Quick Generate Tab:**
+- Enter text directly in the browser
+- Select voice, adjust speed, choose language
+- Play audio directly or download
+
+**📁 File Processing Tab:**
+- Upload `.txt`, `.epub`, or `.pdf` files
+- Convert entire books to audiobooks
+- Download in WAV, MP3, or M4A format
+
+**🎭 Voice Lab Tab:**
+- Preview different voices with sample text
+- Blend two voices with adjustable weights
+- Experiment with voice combinations
+
+**Command Line Options for Web UI:**
+```bash
+# Custom port
+kokoro-tts-ui --server-port 8080
+
+# Listen on all interfaces
+kokoro-tts-ui --server-name 0.0.0.0
+
+# Create a public share link
+kokoro-tts-ui --share
+
+# Custom model paths
+kokoro-tts-ui --model /path/to/model.onnx --voices /path/to/voices.bin
+```
+
+---
+
+### CLI Usage (For Advanced Users)
 
 ```bash
 kokoro-tts <input_text_file> [<output_audio_file>] [options]

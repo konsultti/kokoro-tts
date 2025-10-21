@@ -3,6 +3,7 @@
 # Standard library imports
 import os
 import sys
+import shutil
 import itertools
 import threading
 import time
@@ -296,26 +297,53 @@ Options:
     --model <path>      Path to kokoro-v1.0.onnx model file (default: ./kokoro-v1.0.onnx)
     --voices <path>     Path to voices-v1.0.bin file (default: ./voices-v1.0.bin)
 
+Audiobook Creation (EPUB/PDF only):
+    --audiobook <output.m4a>     Create M4A audiobook with metadata and chapters
+    --select-chapters <sel>      Chapter selection: "all", "1,3,5", "1-5" (default: all)
+    --keep-temp                  Keep temporary files after creation
+    --temp-dir <dir>             Custom temporary directory
+    --no-metadata                Skip metadata embedding
+    --no-chapters                Skip chapter marker embedding
+    --cover <path>               Custom cover image path
+    --title <str>                Override book title
+    --author <str>               Override book author
+    --narrator <str>             Set narrator name
+    --year <str>                 Set publication year
+    --genre <str>                Set genre/category
+    --description <str>          Set book description
+
 Input formats:
     .txt               Text file input
     .epub              EPUB book input (will process chapters)
     .pdf               PDF document input (extracts chapters from TOC or content)
 
 Examples:
+    # Basic text-to-speech
     kokoro-tts input.txt output.wav --speed 1.2 --lang en-us --voice af_sarah
-    kokoro-tts input.epub --chapters ./audiobook/ --format m4a  # One file per chapter
-    kokoro-tts input.epub --split-output ./chunks/ --format mp3  # Many small files
-    kokoro-tts input.pdf output.m4a --speed 1.2 --lang en-us --voice af_sarah --format m4a
-    kokoro-tts input.pdf --chapters ./chapters/ --format m4a
     kokoro-tts input.txt --stream --speed 0.8
     kokoro-tts input.txt output.wav --voice "af_sarah:60,am_adam:40"
-    kokoro-tts input.txt --stream --voice "am_adam,af_sarah" # 50-50 blend
+
+    # Chapter-based processing
+    kokoro-tts input.epub --chapters ./audiobook/ --format m4a
+    kokoro-tts input.epub --split-output ./chunks/ --format mp3
+    kokoro-tts input.pdf --chapters ./chapters/ --format m4a
+
+    # Audiobook creation (NEW!)
+    kokoro-tts book.epub --audiobook audiobook.m4a
+    kokoro-tts book.epub --audiobook output.m4a --select-chapters "1-5,10"
+    kokoro-tts book.epub --audiobook output.m4a --title "My Book" --author "John Doe"
+    kokoro-tts book.pdf --audiobook output.m4a --narrator "Sarah" --keep-temp
+
+    # Voice blending
+    kokoro-tts input.txt --stream --voice "am_adam,af_sarah"  # 50-50 blend
+
+    # Utilities
     kokoro-tts --merge-chunks --split-output ./chunks/ --format wav
     kokoro-tts --help-voices
     kokoro-tts --help-languages
-    kokoro-tts input.epub --split-output ./chunks/ --debug
+
+    # Custom model paths
     kokoro-tts input.txt output.wav --model /path/to/model.onnx --voices /path/to/voices.bin
-    kokoro-tts input.txt --model ./models/kokoro-v1.0.onnx --voices ./models/voices-v1.0.bin
     """)
 
 def print_supported_languages(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
@@ -397,7 +425,7 @@ def validate_voice(voice, kokoro):
         print(f"Error getting supported voices: {e}")
         sys.exit(1)
 
-def extract_chapters_from_epub(epub_file, debug=False):
+def extract_chapters_from_epub(epub_file, debug=False, skip_confirmation=False):
     """Extract chapters from epub file using ebooklib's metadata and TOC."""
     if not os.path.exists(epub_file):
         raise FileNotFoundError(f"EPUB file not found: {epub_file}")
@@ -616,18 +644,20 @@ class PdfParser:
     then falls back to markdown-based extraction if TOC fails.
     """
     
-    def __init__(self, pdf_path: str, debug: bool = False, min_chapter_length: int = 50):
+    def __init__(self, pdf_path: str, debug: bool = False, min_chapter_length: int = 50, skip_confirmation: bool = False):
         """Initialize PDF parser.
-        
+
         Args:
             pdf_path: Path to PDF file
             debug: Enable debug logging
             min_chapter_length: Minimum text length to consider as chapter
+            skip_confirmation: Skip user confirmation prompt
         """
         self.pdf_path = pdf_path
         self.chapters = []
         self.debug = debug
         self.min_chapter_length = min_chapter_length
+        self.skip_confirmation = skip_confirmation
         
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
@@ -687,9 +717,10 @@ class PdfParser:
             if self.debug:
                 print(f"\nDEBUG: Found {len(toc)} TOC entries")
             
-            # Get user confirmation
-            print("\nPress Enter to start processing, or Ctrl+C to cancel...")
-            input()
+            # Get user confirmation (unless skipped)
+            if not self.skip_confirmation:
+                print("\nPress Enter to start processing, or Ctrl+C to cancel...")
+                input()
             
             # Extract level 1 chapters, filtering out empty titles and duplicates
             seen_pages = set()
@@ -1668,7 +1699,21 @@ def get_valid_options():
         '--format',
         '--debug',
         '--model',
-        '--voices'
+        '--voices',
+        # Audiobook options
+        '--audiobook',
+        '--select-chapters',
+        '--keep-temp',
+        '--temp-dir',
+        '--no-metadata',
+        '--no-chapters',
+        '--cover',
+        '--title',
+        '--author',
+        '--narrator',
+        '--year',
+        '--genre',
+        '--description'
     }
 
 
@@ -1690,7 +1735,9 @@ def main():
         if arg.startswith('--') and arg not in valid_options:
             unknown_options.append(arg)
             # Skip the next argument if it's a value for an option that takes parameters
-        elif arg in {'--speed', '--lang', '--voice', '--split-output', '--chapters', '--format', '--model', '--voices'}:
+        elif arg in {'--speed', '--lang', '--voice', '--split-output', '--chapters', '--format', '--model', '--voices',
+                     '--audiobook', '--select-chapters', '--temp-dir', '--cover', '--title', '--author',
+                     '--narrator', '--year', '--genre', '--description'}:
             i += 1
         i += 1
     
@@ -1759,6 +1806,21 @@ def main():
     model_path = "kokoro-v1.0.onnx"  # default model path
     voices_path = "voices-v1.0.bin"  # default voices path
 
+    # Audiobook options
+    audiobook_output = None
+    select_chapters = "all"
+    keep_temp = '--keep-temp' in sys.argv
+    temp_dir = None
+    no_metadata = '--no-metadata' in sys.argv
+    no_chapters_markers = '--no-chapters' in sys.argv
+    cover_path = None
+    title_override = None
+    author_override = None
+    narrator_override = None
+    year_override = None
+    genre_override = None
+    description_override = None
+
     # Parse optional arguments
     for i, arg in enumerate(sys.argv):
         if arg == '--speed' and i + 1 < len(sys.argv):
@@ -1784,6 +1846,27 @@ def main():
             model_path = sys.argv[i + 1]
         elif arg == '--voices' and i + 1 < len(sys.argv):
             voices_path = sys.argv[i + 1]
+        # Audiobook options
+        elif arg == '--audiobook' and i + 1 < len(sys.argv):
+            audiobook_output = sys.argv[i + 1]
+        elif arg == '--select-chapters' and i + 1 < len(sys.argv):
+            select_chapters = sys.argv[i + 1]
+        elif arg == '--temp-dir' and i + 1 < len(sys.argv):
+            temp_dir = sys.argv[i + 1]
+        elif arg == '--cover' and i + 1 < len(sys.argv):
+            cover_path = sys.argv[i + 1]
+        elif arg == '--title' and i + 1 < len(sys.argv):
+            title_override = sys.argv[i + 1]
+        elif arg == '--author' and i + 1 < len(sys.argv):
+            author_override = sys.argv[i + 1]
+        elif arg == '--narrator' and i + 1 < len(sys.argv):
+            narrator_override = sys.argv[i + 1]
+        elif arg == '--year' and i + 1 < len(sys.argv):
+            year_override = sys.argv[i + 1]
+        elif arg == '--genre' and i + 1 < len(sys.argv):
+            genre_override = sys.argv[i + 1]
+        elif arg == '--description' and i + 1 < len(sys.argv):
+            description_override = sys.argv[i + 1]
     
     # Validate mutually exclusive options
     if split_output and chapters_output:
@@ -1791,6 +1874,49 @@ def main():
         print("  --split-output: Creates many small chunk files")
         print("  --chapters: Creates one file per chapter (recommended)")
         sys.exit(1)
+
+    # Validate audiobook options
+    if audiobook_output:
+        # Audiobook requires EPUB or PDF input
+        if not input_file or input_file in stdin_indicators:
+            print("Error: --audiobook requires EPUB or PDF input file")
+            sys.exit(1)
+
+        if not (input_file.endswith('.epub') or input_file.endswith('.pdf')):
+            print("Error: --audiobook requires EPUB or PDF input file")
+            print(f"  Got: {input_file}")
+            sys.exit(1)
+
+        # Audiobook is mutually exclusive with --chapters
+        if chapters_output:
+            print("Error: --audiobook and --chapters are mutually exclusive")
+            print("  --audiobook already creates chapter-based output with metadata")
+            sys.exit(1)
+
+        # Audiobook is mutually exclusive with --split-output
+        if split_output:
+            print("Error: --audiobook and --split-output are mutually exclusive")
+            sys.exit(1)
+
+        # Force M4A format for audiobook
+        format = 'm4a'
+
+        # Validate output has .m4a extension
+        if not audiobook_output.endswith('.m4a'):
+            print("Error: --audiobook output must have .m4a extension")
+            print(f"  Got: {audiobook_output}")
+            sys.exit(1)
+
+        # Check if output file exists and prompt for overwrite
+        if os.path.exists(audiobook_output):
+            try:
+                response = input(f"Output file '{audiobook_output}' already exists. Overwrite? [y/N]: ")
+                if response.lower() not in ['y', 'yes']:
+                    print("Aborted.")
+                    sys.exit(0)
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.")
+                sys.exit(0)
 
     # Handle merge chunks operation
     if merge_chunks:
@@ -1818,7 +1944,276 @@ def main():
     
     # Add debug flag
     debug = '--debug' in sys.argv
-    
+
+    # Handle audiobook creation workflow
+    if audiobook_output:
+        global stop_spinner, stop_audio
+
+        from kokoro_tts.audiobook import AudiobookCreator, parse_chapter_selection
+        from kokoro_tts.core import AudiobookOptions
+
+        # Create audiobook options
+        audiobook_opts = AudiobookOptions(
+            select_chapters=select_chapters,
+            keep_temp=keep_temp,
+            temp_dir=temp_dir,
+            no_metadata=no_metadata,
+            no_chapters=no_chapters_markers,
+            cover_path=cover_path,
+            title=title_override,
+            author=author_override,
+            narrator=narrator_override,
+            year=year_override,
+            genre=genre_override,
+            description=description_override
+        )
+
+        # Import the chapter processing workflow from this module
+        # (We'll use convert_text_to_audio in a special way for audiobook)
+        print(f"Creating audiobook: {audiobook_output}\n")
+
+        # Use AudiobookCreator context manager
+        with AudiobookCreator(input_file, audiobook_opts) as creator:
+            # Extract metadata
+            metadata = creator.extract_metadata()
+
+            # Extract chapters from file
+            if input_file.endswith('.epub'):
+                all_chapters = extract_chapters_from_epub(input_file, debug, skip_confirmation=True)
+            else:  # PDF
+                parser = PdfParser(input_file, debug=debug, skip_confirmation=True)
+                all_chapters = parser.get_chapters()
+
+            if not all_chapters:
+                print("Error: No chapters found in input file")
+                sys.exit(1)
+
+            # Select chapters
+            from kokoro_tts.core import Chapter
+            chapter_objects = [
+                Chapter(title=ch['title'], content=ch['content'], order=ch['order'])
+                for ch in all_chapters
+            ]
+            selected_chapters = creator.select_chapters_from_list(chapter_objects)
+
+            # Get temp directory for chapter processing
+            temp_chapters_dir = creator.get_temp_dir()
+
+            print(f"[3/7] Generating audio for {len(selected_chapters)} chapters...\n")
+
+            # Use existing chapter processing by setting chapters_output to temp dir
+            # We need to process chapters manually to maintain control
+            from kokoro_onnx import Kokoro
+
+            # Load model
+            print("Loading Kokoro model...")
+            kokoro = Kokoro(model_path, voices_path)
+
+            # Validate/select voice
+            if voice is None:
+                # Interactive voice selection - use default
+                print("No voice specified, using default voice (af_sarah)")
+                voice = "af_sarah"
+            else:
+                # Validate the voice
+                voice = validate_voice(voice, kokoro)
+
+            # Process each selected chapter
+            chapter_files = []
+            chapter_titles = []
+
+            for chapter_idx, chapter in enumerate(selected_chapters, 1):
+                chapter_title = chapter.title
+                chapter_content = chapter.content
+                chapter_titles.append(chapter_title)
+
+                # Create chapter filename (sanitize title)
+                safe_title = "".join(c for c in chapter_title if c.isalnum() or c in (' ', '-', '_')).strip()
+                safe_title = safe_title[:50]  # Limit length
+                chapter_filename = f"Chapter_{chapter_idx:03d}_{safe_title}.m4a"
+                chapter_file = os.path.join(temp_chapters_dir, chapter_filename)
+                chapter_files.append(chapter_file)
+
+                print(f"\nChapter {chapter_idx}/{len(selected_chapters)}: {chapter_title}")
+
+                # Process chapter using existing logic
+                chunks = chunk_text(chapter_content, initial_chunk_size=1000)
+                total_chunks = len(chunks)
+
+                if debug:
+                    print(f"  DEBUG: Chapter has {total_chunks} chunks")
+                    print(f"  DEBUG: Chapter content length: {len(chapter_content)} chars")
+
+                if total_chunks == 0:
+                    print(f"  Warning: Chapter '{chapter_title}' has no content, skipping")
+                    continue
+
+                all_samples = []
+                sample_rate = None
+
+                for chunk_num, chunk in enumerate(chunks, 1):
+                    if stop_audio:
+                        break
+
+                    if debug:
+                        print(f"\n  DEBUG: Processing chunk {chunk_num}/{total_chunks}")
+                        print(f"  DEBUG: Chunk length: {len(chunk)} chars")
+                        print(f"  DEBUG: Voice: {voice}")
+                        print(f"  DEBUG: Lang: {lang}")
+
+                    # Progress indicator
+                    filled = "■" * (chunk_num - 1)
+                    remaining = "□" * (total_chunks - chunk_num + 1)
+                    progress_bar = f"[{filled}{remaining}] ({chunk_num}/{total_chunks})"
+
+                    stop_spinner = False
+                    spinner_thread = threading.Thread(
+                        target=spinning_wheel,
+                        args=(f"Processing chunk {chunk_num}/{total_chunks}", progress_bar)
+                    )
+                    spinner_thread.start()
+
+                    try:
+                        samples, sr = process_chunk_sequential(
+                            chunk, kokoro, voice, speed, lang,
+                            retry_count=0, debug=debug
+                        )
+
+                        if samples is not None:
+                            all_samples.extend(samples)
+                            if sample_rate is None:
+                                sample_rate = sr
+                    except Exception as e:
+                        print(f"\nError processing chunk {chunk_num}: {e}")
+                        if debug:
+                            import traceback
+                            traceback.print_exc()
+
+                    stop_spinner = True
+                    spinner_thread.join()
+
+                    # Debug output after spinner stops to avoid stdout conflicts
+                    if debug and samples is not None:
+                        print(f"  DEBUG: Chunk {chunk_num} completed: {len(samples)} samples at {sr} Hz")
+
+                if stop_audio:
+                    print("\nAudiobook creation interrupted")
+                    sys.exit(1)
+
+                # Save chapter file
+                if all_samples:
+                    save_audio_with_format(all_samples, sample_rate, chapter_file, 'm4a')
+                    print(f"\n✓ Saved: {chapter_filename}")
+                else:
+                    print(f"\nWarning: No audio generated for chapter {chapter_idx}")
+
+            if stop_audio:
+                sys.exit(1)
+
+            # Merge chapter files into single audiobook
+            print(f"\n[4/7] Merging {len(chapter_files)} chapters...")
+
+            # Create temp merged file (without metadata)
+            temp_merged = os.path.join(temp_chapters_dir, "_temp_merged.m4a")
+
+            # Use FFmpeg to concatenate
+            import subprocess
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                filelist_path = f.name
+                for chapter_file in chapter_files:
+                    if os.path.exists(chapter_file):
+                        abs_path = os.path.abspath(chapter_file)
+                        escaped_path = abs_path.replace("'", "'\\''")
+                        f.write(f"file '{escaped_path}'\n")
+
+            try:
+                ffmpeg_cmd = [
+                    'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                    '-i', filelist_path,
+                    '-c:a', 'aac', '-b:a', '128k',
+                    temp_merged
+                ]
+
+                result = subprocess.run(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+
+                if result.returncode != 0:
+                    print(f"FFmpeg error: {result.stderr}")
+                    raise Exception(f"FFmpeg failed with return code {result.returncode}")
+
+                print("✓ Chapters merged")
+            finally:
+                if os.path.exists(filelist_path):
+                    os.unlink(filelist_path)
+
+            # Embed metadata and chapters
+            if not no_metadata:
+                print("\n[5/7] Embedding metadata and chapter markers...")
+
+                # Calculate chapter timings
+                from kokoro_tts.audiobook import calculate_chapter_timings, embed_audiobook_metadata
+
+                chapters_info = calculate_chapter_timings(chapter_files, chapter_titles)
+
+                # Add narrator if not specified
+                if not metadata.get('narrator') and voice:
+                    metadata['narrator'] = voice
+
+                # Skip chapter markers if requested
+                if no_chapters_markers:
+                    chapters_info = []
+
+                # Embed metadata
+                try:
+                    embed_audiobook_metadata(
+                        temp_merged,
+                        audiobook_output,
+                        metadata,
+                        metadata.get('cover'),
+                        chapters_info
+                    )
+                    print("✓ Metadata embedded")
+                    if not no_chapters_markers and chapters_info:
+                        print(f"✓ {len(chapters_info)} chapter markers added")
+                except Exception as e:
+                    print(f"Warning: Could not embed metadata: {e}")
+                    print("Copying file without metadata...")
+                    shutil.copy(temp_merged, audiobook_output)
+            else:
+                print("\n[5/7] Skipping metadata embedding (--no-metadata)...")
+                shutil.copy(temp_merged, audiobook_output)
+
+            # Calculate final file info
+            print("\n" + "━" * 50)
+            print(f"✓ Audiobook created: {audiobook_output}")
+
+            try:
+                file_size = os.path.getsize(audiobook_output) / (1024 * 1024)  # MB
+                print(f"  Size: {file_size:.1f} MB")
+
+                # Get duration
+                from pydub import AudioSegment
+                audio = AudioSegment.from_file(audiobook_output, format='mp4')
+                duration_sec = len(audio) / 1000.0
+                hours = int(duration_sec // 3600)
+                minutes = int((duration_sec % 3600) // 60)
+                seconds = int(duration_sec % 60)
+                print(f"  Duration: {hours}h {minutes}m {seconds}s")
+                print(f"  Chapters: {len(selected_chapters)}")
+            except:
+                pass
+
+            print("━" * 50)
+
+        # Exit after audiobook creation
+        sys.exit(0)
+
     # Convert text to audio with debug flag
     convert_text_to_audio(input_file, output_file, voice=voice, stream=stream,
                          speed=speed, lang=lang, split_output=split_output,
