@@ -1,10 +1,21 @@
 # Kokoro TTS
 
+This is a fork from https://github.com/nazdridoy/kokoro-tts
+
+Major upgrades are:
+- Updated dependencies
+- Web-UI added
+- New CLI features, like --audiobook
+- Include metadata to audiobook
+- Improved GPU support (Nvidia, AMD)
+
+All new features are coded by Claude Code.
+
+
 A text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents.
 
 Available as both a **CLI** and **Web UI**.
 
-![ngpt-s-c](https://raw.githubusercontent.com/nazdridoy/kokoro-tts/main/previews/kokoro-tts-h.png)
 
 ## Features
 
@@ -20,13 +31,6 @@ Available as both a **CLI** and **Web UI**.
 - 🚀 **GPU Acceleration**: CUDA, TensorRT, ROCm, CoreML support
 - 🖥️ **Web UI**: Easy-to-use Gradio interface with voice preview and blending
 
-## Demo
-
-Kokoro TTS is an open-source CLI tool that delivers high-quality text-to-speech right from your terminal. Think of it as your personal voice studio, capable of transforming any text into natural-sounding speech with minimal effort.
-
-https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
-
-[Demo Audio (MP3)](https://github.com/nazdridoy/kokoro-tts/raw/main/previews/demo.mp3) | [Demo Audio (WAV)](https://github.com/nazdridoy/kokoro-tts/raw/main/previews/demo.wav)
 
 ## TODO
 
@@ -40,26 +44,19 @@ https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
 
 ## Installation
 
-### Method 1: Install from PyPI (Recommended)
+### Method 1: Install from Git (Recommended)
 
-The easiest way to install Kokoro TTS is from PyPI:
+Install directly from this fork to get the latest features:
 
-**CLI Only:**
 ```bash
 # Using uv (recommended)
-uv tool install kokoro-tts
+uv tool install git+https://github.com/konsultti/kokoro-tts
 
-# Using pip
-pip install kokoro-tts
-```
+# Using pip - CLI only
+pip install git+https://github.com/konsultti/kokoro-tts
 
-**CLI + Web UI:**
-```bash
-# Using pip with UI dependencies
-pip install 'kokoro-tts[ui]'
-
-# Or with uv
-uv pip install 'kokoro-tts[ui]'
+# Using pip - CLI + Web UI
+pip install 'git+https://github.com/konsultti/kokoro-tts[ui]'
 ```
 
 After installation, you can run:
@@ -71,23 +68,11 @@ kokoro-tts --help
 kokoro-tts-ui
 ```
 
-### Method 2: Install from Git
-
-Install directly from the repository:
-
-```bash
-# Using uv (recommended)
-uv tool install git+https://github.com/nazdridoy/kokoro-tts
-
-# Using pip
-pip install git+https://github.com/nazdridoy/kokoro-tts
-```
-
-### Method 3: Clone and Install Locally
+### Method 2: Clone and Install Locally
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/nazdridoy/kokoro-tts.git
+git clone https://github.com/konsultti/kokoro-tts.git
 cd kokoro-tts
 ```
 
@@ -115,13 +100,13 @@ uv run kokoro-tts --help
 kokoro-tts --help
 ```
 
-### Method 4: Run Without Installation
+### Method 3: Run Without Installation
 
 If you prefer to run without installing:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/nazdridoy/kokoro-tts.git
+git clone https://github.com/konsultti/kokoro-tts.git
 cd kokoro-tts
 ```
 
@@ -155,13 +140,13 @@ After installation, download the required model files to your working directory:
 
 ```bash
 # Download voice data (bin format is preferred)
-wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/v0.5.0/voices.bin -O voices-v1.0.bin
 
 # Download the model
-wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/v0.5.0/kokoro-v0.19.onnx -O kokoro-v1.0.onnx
 ```
 
-> The script requires `voices-v1.0.bin` and `kokoro-v1.0.onnx` to be present in the same directory where you run the `kokoro-tts` command.
+> **Note:** The script requires `voices-v1.0.bin` and `kokoro-v1.0.onnx` to be present in the same directory where you run the `kokoro-tts` command. The models are downloaded from the upstream [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) repository.
 
 ### GPU Acceleration (Optional)
 
