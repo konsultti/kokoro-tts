@@ -62,6 +62,23 @@ class ProcessingOptions:
     debug: bool = False
 
 
+@dataclass
+class AudiobookOptions:
+    """Options for audiobook creation."""
+    select_chapters: str = "all"
+    keep_temp: bool = False
+    temp_dir: Optional[str] = None
+    no_metadata: bool = False
+    no_chapters: bool = False
+    cover_path: Optional[str] = None
+    title: Optional[str] = None
+    author: Optional[str] = None
+    narrator: Optional[str] = None
+    year: Optional[str] = None
+    genre: Optional[str] = None
+    description: Optional[str] = None
+
+
 class KokoroEngine:
     """Main TTS engine for Kokoro text-to-speech conversion.
 
