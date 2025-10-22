@@ -440,18 +440,36 @@ class KokoroUI:
             def log_progress(msg: str):
                 progress_log.append(msg)
 
+            def format_progress_log():
+                """Format progress log with clear header and structure."""
+                if not progress_log:
+                    return "Starting audiobook creation..."
+                return "PROGRESS LOG:\n" + "=" * 50 + "\n" + "\n".join(progress_log)
+
+            # Initial yield - show we're starting
+            # Output format: (file_download, info_panel, progress_log)
+            yield None, "", format_progress_log()
+
             # Use AudiobookCreator context manager
             with AudiobookCreator(input_path, audiobook_opts) as creator:
                 temp_dir_created = creator.temp_dir
 
                 # Step 1: Extract metadata
                 progress(0.1, desc="[1/7] Extracting metadata...")
-                log_progress("[1/7] Extracting metadata and cover...")
                 metadata = creator.extract_metadata()
+
+                log_progress("✓ [1/7] Metadata extracted")
+                if metadata.get('title'):
+                    log_progress(f"  - Title: \"{metadata['title']}\"")
+                if metadata.get('author'):
+                    log_progress(f"  - Author: \"{metadata['author']}\"")
+                if metadata.get('cover'):
+                    log_progress(f"  - Cover: Found ({len(metadata['cover'])} bytes)")
+
+                yield None, "", format_progress_log()
 
                 # Step 2: Extract and select chapters
                 progress(0.15, desc="[2/7] Extracting chapters...")
-                log_progress("[2/7] Extracting chapters from book...")
 
                 if input_path.endswith('.epub'):
                     all_chapters = extract_chapters_from_epub(
@@ -474,7 +492,9 @@ class KokoroUI:
                 ]
 
                 selected_chapters = creator.select_chapters_from_list(chapter_objects)
-                log_progress(f"  Selected {len(selected_chapters)} chapters")
+
+                log_progress(f"✓ [2/7] Chapters extracted")
+                log_progress(f"  - Selected {len(selected_chapters)} chapters")
 
                 # Add introduction if requested
                 if not audiobook_opts.no_intro:
@@ -486,19 +506,19 @@ class KokoroUI:
                     if intro_content:
                         intro_chapter = Chapter(title="Introduction", content=intro_content, order=0)
                         selected_chapters = [intro_chapter] + selected_chapters
-                        log_progress("  Added introduction chapter")
+                        log_progress("  - Added introduction chapter")
+
+                yield None, "", format_progress_log()
 
                 # Step 3: Generate audio for each chapter
                 progress(0.20, desc="[3/7] Generating audio...")
-                log_progress(f"[3/7] Generating audio for {len(selected_chapters)} chapters...")
+                log_progress(f"✓ [3/7] Generating audio ({len(selected_chapters)} chapters)")
 
                 chapter_files = []
                 chapter_titles = []
 
                 for idx, chapter in enumerate(selected_chapters, 1):
-                    chapter_progress = 0.20 + (0.50 * idx / len(selected_chapters))
-                    progress(chapter_progress, desc=f"[3/7] Processing chapter {idx}/{len(selected_chapters)}: {chapter.title[:30]}...")
-                    log_progress(f"  [{idx}/{len(selected_chapters)}] {chapter.title}")
+                    log_progress(f"  - [{idx}/{len(selected_chapters)}] {chapter.title}")
 
                     # Generate audio for this chapter
                     chapter_file = os.path.join(temp_dir_created, f"chapter_{idx:03d}.m4a")
@@ -517,14 +537,20 @@ class KokoroUI:
                         chapter_files.append(chapter_file)
                         chapter_titles.append(chapter.title)
                     else:
-                        log_progress(f"    Warning: No audio generated for chapter {idx}")
+                        log_progress(f"    ⚠ Warning: No audio generated for chapter {idx}")
+
+                    # Update progress bar and yield every chapter to keep displays in sync
+                    chapter_progress = 0.20 + (0.50 * idx / len(selected_chapters))
+                    progress(chapter_progress, desc=f"[3/7] Processing chapter {idx}/{len(selected_chapters)}: {chapter.title[:30]}...")
+                    yield None, "", format_progress_log()
 
                 if not chapter_files:
-                    return None, "", "✗ Error: No audio generated"
+                    yield None, "", "✗ Error: No audio generated"
+                    return
 
                 # Step 4: Merge chapters
                 progress(0.72, desc="[4/7] Merging chapters...")
-                log_progress(f"[4/7] Merging {len(chapter_files)} chapters...")
+                log_progress(f"✓ [4/7] Merging {len(chapter_files)} chapters")
 
                 temp_merged = os.path.join(temp_dir_created, "_temp_merged.m4a")
 
@@ -535,7 +561,7 @@ class KokoroUI:
                     # Generate silence file if chapter pause requested
                     silence_file = None
                     if chapter_pause > 0:
-                        log_progress(f"  Adding {chapter_pause}s pause between chapters...")
+                        log_progress(f"  - Adding {chapter_pause}s pause between chapters")
                         silence_file = os.path.join(temp_dir_created, "_silence.m4a")
                         silence_cmd = [
                             'ffmpeg', '-y', '-f', 'lavfi',
@@ -577,15 +603,16 @@ class KokoroUI:
                     if result.returncode != 0:
                         raise Exception(f"FFmpeg failed: {result.stderr}")
 
-                    log_progress("  ✓ Chapters merged")
                 finally:
                     if os.path.exists(filelist_path):
                         os.unlink(filelist_path)
 
+                yield None, "", format_progress_log()
+
                 # Step 5: Embed metadata
                 if not no_chapters:
                     progress(0.85, desc="[5/7] Embedding metadata...")
-                    log_progress("[5/7] Embedding metadata and chapter markers...")
+                    log_progress("✓ [5/7] Embedding metadata and chapter markers")
 
                     # Calculate chapter timings
                     chapters_info = calculate_chapter_timings(
@@ -607,20 +634,22 @@ class KokoroUI:
                             metadata.get('cover'),
                             chapters_info
                         )
-                        log_progress("  ✓ Metadata embedded")
-                        log_progress(f"  ✓ {len(chapters_info)} chapter markers added")
+                        log_progress(f"  - {len(chapters_info)} chapter markers added")
+                        log_progress(f"  - Cover art embedded" if metadata.get('cover') else "  - No cover art")
                     except Exception as e:
-                        log_progress(f"  Warning: Could not embed metadata: {e}")
-                        log_progress("  Copying file without metadata...")
+                        log_progress(f"  ⚠ Warning: Could not embed metadata: {e}")
+                        log_progress(f"  - Copying file without metadata")
                         shutil.copy(temp_merged, output_path)
                 else:
                     progress(0.85, desc="[5/7] Skipping metadata...")
-                    log_progress("[5/7] Skipping metadata embedding...")
+                    log_progress("✓ [5/7] Skipping metadata embedding (as requested)")
                     shutil.copy(temp_merged, output_path)
+
+                yield None, "", format_progress_log()
 
             # Step 6: Calculate file info
             progress(0.95, desc="[6/7] Finalizing...")
-            log_progress("[6/7] Calculating audiobook information...")
+            log_progress("✓ [6/7] Calculating file information")
 
             from pydub import AudioSegment
             file_size = os.path.getsize(output_path) / (1024 * 1024)
@@ -630,19 +659,11 @@ class KokoroUI:
             minutes = int((duration_sec % 3600) // 60)
             seconds = int(duration_sec % 60)
 
-            info_text = f"""✓ Audiobook created successfully!
-
-Duration: {hours}h {minutes}m {seconds}s
-Size: {file_size:.1f} MB
-Format: M4A with AAC codec
-Chapters: {len(chapter_files)} included
-Voice: {voice}
-Speed: {speed}x
-"""
+            yield None, "", format_progress_log()
 
             # Step 7: Create final file with proper name
             progress(1.0, desc="[7/7] Complete!")
-            log_progress("[7/7] ✓ Audiobook creation complete!")
+            log_progress("✓ [7/7] Audiobook creation complete!")
             log_progress(f"\nDuration: {hours}h {minutes}m {seconds}s")
             log_progress(f"Size: {file_size:.1f} MB")
 
@@ -659,12 +680,24 @@ Speed: {speed}x
             except:
                 pass
 
-            return final_output_path, info_text, "\n".join(progress_log)
+            # Final info text for Audiobook Info panel
+            info_text = f"""✓ Audiobook created successfully!
+
+Duration: {hours}h {minutes}m {seconds}s
+Size: {file_size:.1f} MB
+Format: M4A with AAC codec
+Chapters: {len(chapter_files)} included
+Voice: {voice}
+Speed: {speed}x
+"""
+
+            # Final yield with completed results
+            yield final_output_path, info_text, format_progress_log()
 
         except Exception as e:
             error_msg = f"✗ Error: {str(e)}"
             progress_log.append(error_msg)
-            return None, "", "\n".join(progress_log)
+            yield None, "", format_progress_log()
 
         finally:
             # Clean up temporary files
