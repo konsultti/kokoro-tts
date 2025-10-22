@@ -145,8 +145,17 @@ def extract_epub_metadata(epub_path: str) -> Dict[str, any]:
         item_name = item.get_name().lower()
 
         if item_type == ITEM_COVER or 'cover' in item_name:
-            metadata['cover'] = item.get_content()
-            break
+            cover_data = item.get_content()
+            # Validate that it's a real image format (PNG/JPEG), not SVG/XML
+            if cover_data and len(cover_data) > 8:
+                # Check magic bytes for common image formats
+                is_png = cover_data[:8] == b'\x89PNG\r\n\x1a\n'
+                is_jpeg = cover_data[:3] == b'\xff\xd8\xff'
+                is_webp = cover_data[:4] == b'RIFF' and cover_data[8:12] == b'WEBP'
+
+                if is_png or is_jpeg or is_webp:
+                    metadata['cover'] = cover_data
+                    break
 
     return metadata
 
@@ -190,7 +199,10 @@ def extract_pdf_metadata(pdf_path: str) -> Dict[str, any]:
     return metadata
 
 
-def calculate_chapter_timings(chapter_files: List[str], chapter_titles: List[str]) -> List[Dict]:
+def calculate_chapter_timings(
+    chapter_files: List[str],
+    chapter_titles: List[str]
+) -> List[Dict]:
     """Calculate start/end times for each chapter.
 
     Args:
@@ -218,6 +230,7 @@ def calculate_chapter_timings(chapter_files: List[str], chapter_titles: List[str
             })
 
             current_time += duration
+
         except Exception as e:
             print(f"Warning: Could not calculate timing for {chapter_file}: {e}")
             continue

@@ -156,11 +156,13 @@ class KokoroEngine:
             import onnxruntime as ort
             available_providers = ort.get_available_providers()
 
-            # Priority: TensorRT > CUDA > ROCm > CoreML
-            if 'TensorrtExecutionProvider' in available_providers:
-                return 'TensorrtExecutionProvider'
-            elif 'CUDAExecutionProvider' in available_providers:
+            # Priority: CUDA > TensorRT > ROCm > CoreML
+            # CUDA is prioritized as it's more commonly available than TensorRT
+            # (TensorRT requires additional libraries beyond CUDA)
+            if 'CUDAExecutionProvider' in available_providers:
                 return 'CUDAExecutionProvider'
+            elif 'TensorrtExecutionProvider' in available_providers:
+                return 'TensorrtExecutionProvider'
             elif 'ROCMExecutionProvider' in available_providers:
                 return 'ROCMExecutionProvider'
             elif 'CoreMLExecutionProvider' in available_providers:
