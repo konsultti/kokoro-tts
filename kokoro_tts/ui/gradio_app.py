@@ -333,7 +333,6 @@ class KokoroUI:
         voice: str,
         speed: float,
         language: str,
-        chapter_pause: float,
         title: str,
         author: str,
         narrator: str,
@@ -356,7 +355,6 @@ class KokoroUI:
             voice: Voice selection
             speed: Speech speed
             language: Language code
-            chapter_pause: Seconds of pause between chapters
             title: Book title override
             author: Author override
             narrator: Narrator name
@@ -430,8 +428,7 @@ class KokoroUI:
                 narrator=narrator if narrator else None,
                 year=year if year else None,
                 genre=genre if genre else None,
-                description=description if description else None,
-                chapter_pause_seconds=chapter_pause
+                description=description if description else None
             )
 
             # Progress tracking
@@ -558,32 +555,12 @@ class KokoroUI:
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
                     filelist_path = f.name
 
-                    # Generate silence file if chapter pause requested
-                    silence_file = None
-                    if chapter_pause > 0:
-                        log_progress(f"  - Adding {chapter_pause}s pause between chapters")
-                        silence_file = os.path.join(temp_dir_created, "_silence.m4a")
-                        silence_cmd = [
-                            'ffmpeg', '-y', '-f', 'lavfi',
-                            '-i', f'anullsrc=r=44100:cl=mono',
-                            '-t', str(chapter_pause),
-                            '-c:a', 'aac', '-b:a', '128k',
-                            silence_file
-                        ]
-                        subprocess.run(silence_cmd, capture_output=True, text=True)
-
                     # Create concat list
-                    for i, chapter_file in enumerate(chapter_files):
+                    for chapter_file in chapter_files:
                         if os.path.exists(chapter_file):
                             abs_path = os.path.abspath(chapter_file)
                             escaped_path = abs_path.replace("'", "'\\''")
                             f.write(f"file '{escaped_path}'\n")
-
-                            # Insert silence between chapters (but not after the last one)
-                            if silence_file and i < len(chapter_files) - 1:
-                                abs_silence = os.path.abspath(silence_file)
-                                escaped_silence = abs_silence.replace("'", "'\\''")
-                                f.write(f"file '{escaped_silence}'\n")
 
                 try:
                     ffmpeg_cmd = [
@@ -617,8 +594,7 @@ class KokoroUI:
                     # Calculate chapter timings
                     chapters_info = calculate_chapter_timings(
                         chapter_files,
-                        chapter_titles,
-                        chapter_pause
+                        chapter_titles
                     )
 
                     # Add narrator if not specified
@@ -978,13 +954,6 @@ def create_ui(
                             choices=SUPPORTED_LANGUAGES,
                             value="en-us"
                         )
-                    ab_chapter_pause = gr.Slider(
-                        minimum=0,
-                        maximum=5,
-                        value=2.0,
-                        step=0.5,
-                        label="Pause between chapters (seconds)"
-                    )
 
                 # Metadata (auto-filled but editable)
                 with gr.Accordion("📝 Metadata (auto-detected from file)", open=False):
@@ -1096,7 +1065,7 @@ def create_ui(
                     fn=ui.generate_audiobook,
                     inputs=[
                         audiobook_file, ab_voice, ab_speed, ab_lang,
-                        ab_chapter_pause, ab_title, ab_author, ab_narrator,
+                        ab_title, ab_author, ab_narrator,
                         ab_year, ab_genre, ab_description, ab_cover,
                         ab_select_chapters, ab_skip_front, ab_add_intro,
                         ab_intro_text, ab_keep_temp, ab_no_chapters

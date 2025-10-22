@@ -370,7 +370,6 @@ Audiobook Creation (EPUB/PDF only):
     --skip-front-matter          Auto-skip copyright, TOC, etc. (default: enabled)
     --no-intro                   Skip generated introduction
     --intro-text <str>           Custom introduction text
-    --chapter-pause <seconds>    Pause between chapters in seconds (default: 2.0)
     --cover <path>               Custom cover image path
     --title <str>                Override book title
     --author <str>               Override book author
@@ -1892,8 +1891,7 @@ def get_valid_options():
         '--narrator',
         '--year',
         '--genre',
-        '--description',
-        '--chapter-pause'
+        '--description'
     }
 
 
@@ -1917,7 +1915,7 @@ def main():
             # Skip the next argument if it's a value for an option that takes parameters
         elif arg in {'--speed', '--lang', '--voice', '--split-output', '--chapters', '--format', '--model', '--voices',
                      '--audiobook', '--select-chapters', '--temp-dir', '--intro-text', '--cover', '--title', '--author',
-                     '--narrator', '--year', '--genre', '--description', '--chapter-pause'}:
+                     '--narrator', '--year', '--genre', '--description'}:
             i += 1
         i += 1
     
@@ -2004,7 +2002,6 @@ def main():
     year_override = None
     genre_override = None
     description_override = None
-    chapter_pause_seconds = 2.0 if audiobook_output else 0.0
 
     # Parse optional arguments
     for i, arg in enumerate(sys.argv):
@@ -2054,16 +2051,7 @@ def main():
             genre_override = sys.argv[i + 1]
         elif arg == '--description' and i + 1 < len(sys.argv):
             description_override = sys.argv[i + 1]
-        elif arg == '--chapter-pause' and i + 1 < len(sys.argv):
-            try:
-                chapter_pause_seconds = float(sys.argv[i + 1])
-                if chapter_pause_seconds < 0:
-                    print("Error: --chapter-pause must be non-negative")
-                    sys.exit(1)
-            except ValueError:
-                print("Error: --chapter-pause must be a number")
-                sys.exit(1)
-    
+
     # Validate mutually exclusive options
     if split_output and chapters_output:
         print("Error: Cannot use both --split-output and --chapters at the same time")
@@ -2164,8 +2152,7 @@ def main():
             narrator=narrator_override,
             year=year_override,
             genre=genre_override,
-            description=description_override,
-            chapter_pause_seconds=chapter_pause_seconds
+            description=description_override
         )
 
         # Import the chapter processing workflow from this module
@@ -2363,36 +2350,13 @@ def main():
             import subprocess
             import tempfile
 
-            # Generate silence file if chapter pause is requested
-            silence_file = None
-            if chapter_pause_seconds > 0:
-                print(f"  Adding {chapter_pause_seconds}s pause between chapters...")
-                silence_file = os.path.join(temp_chapters_dir, "_silence.m4a")
-                silence_cmd = [
-                    'ffmpeg', '-y', '-f', 'lavfi',
-                    '-i', f'anullsrc=r=44100:cl=mono',
-                    '-t', str(chapter_pause_seconds),
-                    '-c:a', 'aac', '-b:a', '128k',
-                    silence_file
-                ]
-                result = subprocess.run(silence_cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"Warning: Could not generate silence file: {result.stderr}")
-                    silence_file = None
-
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
                 filelist_path = f.name
-                for i, chapter_file in enumerate(chapter_files):
+                for chapter_file in chapter_files:
                     if os.path.exists(chapter_file):
                         abs_path = os.path.abspath(chapter_file)
                         escaped_path = abs_path.replace("'", "'\\''")
                         f.write(f"file '{escaped_path}'\n")
-
-                        # Insert silence between chapters (but not after the last one)
-                        if silence_file and i < len(chapter_files) - 1:
-                            abs_silence = os.path.abspath(silence_file)
-                            escaped_silence = abs_silence.replace("'", "'\\''")
-                            f.write(f"file '{escaped_silence}'\n")
 
             try:
                 ffmpeg_cmd = [
@@ -2425,7 +2389,7 @@ def main():
                 # Calculate chapter timings
                 from kokoro_tts.audiobook import calculate_chapter_timings, embed_audiobook_metadata
 
-                chapters_info = calculate_chapter_timings(chapter_files, chapter_titles, chapter_pause_seconds)
+                chapters_info = calculate_chapter_timings(chapter_files, chapter_titles)
 
                 # Add narrator if not specified
                 if not metadata.get('narrator') and voice:
