@@ -70,11 +70,13 @@ def check_gpu_availability(use_gpu=False):
     # If use_gpu is True and no env variable set, select best available provider
     selected_provider = onnx_provider_env
     if use_gpu and not onnx_provider_env:
-        # Priority: TensorRT > CUDA > ROCm > CoreML > None
-        if has_tensorrt:
-            selected_provider = 'TensorrtExecutionProvider'
-        elif has_cuda:
+        # Priority: CUDA > TensorRT > ROCm > CoreML > None
+        # CUDA is prioritized as it's more commonly available than TensorRT
+        # (TensorRT requires additional libraries beyond CUDA)
+        if has_cuda:
             selected_provider = 'CUDAExecutionProvider'
+        elif has_tensorrt:
+            selected_provider = 'TensorrtExecutionProvider'
         elif has_rocm:
             selected_provider = 'ROCMExecutionProvider'
         elif has_coreml:
