@@ -58,8 +58,21 @@ python -m kokoro_tts.ui.gradio_app
 
 ### Testing
 
-The project has minimal automated tests for audiobook features. Run tests with:
+The project has minimal automated tests for audiobook features located in the `tests/` directory.
 
+**Run automated tests:**
+```bash
+# Test audiobook front matter detection
+python tests/test_front_matter.py
+
+# Test audiobook intro generation
+python tests/test_intro_generation.py
+
+# Create a test EPUB file
+python tests/create_test_epub.py
+```
+
+**Manual testing** is required for most features:
 ```bash
 # Test basic text-to-speech
 uv run kokoro-tts input.txt output.wav --speed 1.2 --lang en-us --voice af_sarah
@@ -81,15 +94,9 @@ uv run kokoro-tts input.txt output.wav --gpu --voice af_sarah
 
 # Test Web UI with GPU
 uv run kokoro-tts-ui --gpu
-
-# Test audiobook front matter detection
-python test_front_matter.py
-
-# Test audiobook intro generation
-python test_intro_generation.py
 ```
 
-**Manual testing** is still required for most features:
+See `tests/TESTING.md` for comprehensive testing documentation.
 
 ### Building
 
@@ -111,6 +118,17 @@ kokoro_tts/
 └── ui/
     ├── __init__.py
     └── gradio_app.py    # Web UI implementation
+
+tests/
+├── README.md            # Testing documentation
+├── TESTING.md           # Comprehensive testing plan
+├── test_front_matter.py # Unit tests for front matter detection
+├── test_intro_generation.py # Unit tests for intro generation
+└── create_test_epub.py  # Test EPUB generation script
+
+scripts/
+├── README.md            # Scripts documentation
+└── convert_epubs_to_audiobooks.sh # Batch EPUB conversion
 ```
 
 ### Core Components
