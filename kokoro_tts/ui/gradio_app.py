@@ -401,8 +401,17 @@ class KokoroUI:
 
             input_path = file.name
 
-            # Create output file
-            output_file = tempfile.NamedTemporaryFile(delete=False, suffix='.m4a')
+            # Create output file with original filename
+            # Extract base name without extension
+            import os
+            base_name = os.path.splitext(os.path.basename(input_path))[0]
+            output_filename = f"{base_name}.m4a"
+
+            output_file = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix='.m4a',
+                prefix=f"{base_name}_"
+            )
             output_path = output_file.name
             output_file.close()
 
@@ -631,13 +640,26 @@ Voice: {voice}
 Speed: {speed}x
 """
 
-            # Step 7: Complete
+            # Step 7: Create final file with proper name
             progress(1.0, desc="[7/7] Complete!")
             log_progress("[7/7] ✓ Audiobook creation complete!")
             log_progress(f"\nDuration: {hours}h {minutes}m {seconds}s")
             log_progress(f"Size: {file_size:.1f} MB")
 
-            return output_path, info_text, "\n".join(progress_log)
+            # Create a copy with the proper filename for download
+            final_output_dir = tempfile.gettempdir()
+            final_output_path = os.path.join(final_output_dir, output_filename)
+
+            # Copy to final location with proper name
+            shutil.copy(output_path, final_output_path)
+
+            # Clean up the temp file with random name
+            try:
+                os.unlink(output_path)
+            except:
+                pass
+
+            return final_output_path, info_text, "\n".join(progress_log)
 
         except Exception as e:
             error_msg = f"✗ Error: {str(e)}"
