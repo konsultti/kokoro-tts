@@ -413,6 +413,55 @@ kokoro-tts input.pdf output.m4a --speed 1.2 --lang en-us --voice af_sarah --form
 kokoro-tts input.pdf --split-output ./chunks/ --format mp3
 ```
 
+#### Audiobook Creation (M4A with Metadata)
+
+Create professional M4A audiobooks with embedded metadata, cover art, and chapter markers:
+
+```bash
+# Basic audiobook creation
+kokoro-tts book.epub --audiobook audiobook.m4a
+
+# With custom metadata
+kokoro-tts book.epub --audiobook output.m4a \
+  --title "My Book" \
+  --author "John Doe" \
+  --narrator "Kokoro TTS"
+
+# Skip front matter (copyright, TOC, etc.) - enabled by default
+kokoro-tts book.epub --audiobook output.m4a --skip-front-matter
+
+# Custom introduction text
+kokoro-tts book.epub --audiobook output.m4a \
+  --intro-text "Welcome to this audiobook presentation"
+
+# Skip auto-generated introduction
+kokoro-tts book.epub --audiobook output.m4a --no-intro
+
+# Select specific chapters
+kokoro-tts book.epub --audiobook output.m4a --select-chapters "1-5,10"
+
+# With custom cover image
+kokoro-tts book.epub --audiobook output.m4a --cover cover.jpg
+
+# Full example with all options
+kokoro-tts book.epub --audiobook output.m4a \
+  --title "The Great Novel" \
+  --author "Jane Smith" \
+  --narrator "Kokoro Sarah" \
+  --voice af_sarah \
+  --speed 1.1 \
+  --cover cover.jpg \
+  --select-chapters "all" \
+  --skip-front-matter
+```
+
+**Audiobook Features:**
+- **Auto-skip front matter**: Automatically skips copyright pages, table of contents, acknowledgments, etc.
+- **Generated introduction**: Adds "This is [title], written by [author], narrated by Kokoro Text-to-Speech"
+- **Keeps story content**: Foreword, Preface, Introduction, and Prologue chapters are preserved
+- **Chapter markers**: Embedded chapter navigation in M4A file
+- **Metadata**: Title, author, narrator, cover art, and more
+
 #### Custom Model Paths
 
 ```bash

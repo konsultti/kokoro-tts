@@ -77,6 +77,9 @@ class AudiobookOptions:
     year: Optional[str] = None
     genre: Optional[str] = None
     description: Optional[str] = None
+    skip_front_matter: bool = True
+    intro_text: Optional[str] = None
+    no_intro: bool = False
 
 
 class KokoroEngine:

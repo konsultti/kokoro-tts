@@ -147,8 +147,10 @@ Legacy CLI implementation (unchanged for backward compatibility):
 
 1. **Input Processing**
    - `extract_text_from_epub()`: Basic EPUB text extraction
-   - `extract_chapters_from_epub()`: Advanced EPUB chapter extraction with TOC parsing (lines 271-473)
-   - `PdfParser` class: PDF processing with TOC and markdown-based extraction (lines 475-703)
+   - `extract_chapters_from_epub(skip_front_matter)`: Advanced EPUB chapter extraction with TOC parsing and optional front matter filtering
+   - `is_front_matter(title, order, word_count)`: Detects front matter chapters (copyright, TOC, etc.)
+   - `generate_audiobook_intro(metadata)`: Generates introduction text from book metadata
+   - `PdfParser` class: PDF processing with TOC and markdown-based extraction
    - Handles stdin cross-platform (Linux/macOS: `/dev/stdin`, `-`; Windows: `CONIN$`)
 
 2. **Text Chunking**
@@ -203,7 +205,10 @@ Voices can be blended by:
 **EPUB Processing:**
 - First attempts TOC-based extraction via `ebooklib`
 - Falls back to document-by-document processing if TOC fails
-- Skips front matter (copyright, title page, cover)
+- Optional front matter filtering (enabled for audiobooks):
+  - Skips: copyright, TOC, acknowledgments, dedication, "about the author"
+  - Keeps: foreword, preface, introduction, prologue (considered story content)
+  - Uses `is_front_matter()` function with title, order, and word count heuristics
 - Extracts content between fragment IDs for precise chapter boundaries
 
 **PDF Processing:**
@@ -221,6 +226,17 @@ Voices can be blended by:
 - `kokoro-onnx` library respects the environment variable for provider selection
 - Compatible with both `onnxruntime` (CPU + CoreML) and `onnxruntime-gpu` (CUDA/TensorRT/ROCm)
 - Both packages can coexist; runtime selection based on `ONNX_PROVIDER`
+
+**Audiobook Processing:**
+- Automatic front matter detection and skipping (enabled by default with `--audiobook`)
+- Front matter keywords defined in `FRONT_MATTER_SKIP_KEYWORDS` constant
+- `is_front_matter()` uses title matching, position, and word count heuristics
+- Generated introduction chapter added automatically:
+  - Format: "This is [title], written by [author], narrated by Kokoro Text-to-Speech"
+  - Uses metadata from EPUB/PDF if available
+  - Can be customized with `--intro-text` or disabled with `--no-intro`
+- Introduction inserted as Chapter 0 before selected chapters
+- AudiobookOptions includes: `skip_front_matter`, `intro_text`, `no_intro`
 
 ## Project Configuration
 
