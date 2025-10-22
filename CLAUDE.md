@@ -10,10 +10,10 @@ Kokoro TTS is a text-to-speech tool using the Kokoro ONNX model. It provides bot
 - **Dual interface**: CLI (`kokoro-tts`) and Web UI (`kokoro-tts-ui`)
 - **Refactored architecture**: Core logic in `kokoro_tts/core.py`, CLI in `kokoro_tts/__init__.py`, UI in `kokoro_tts/ui/`
 - Python 3.10-3.13 support
-- Published to PyPI as `kokoro-tts`
 - Uses `uv` as the preferred package manager
 - Depends on external model files (`kokoro-v1.0.onnx` and `voices-v1.0.bin`)
 - Uses kokoro-onnx 0.4.9 with hardcoded language support
+- Fork of original kokoro-tts with additional audiobook features
 
 ## Development Commands
 
@@ -27,7 +27,7 @@ uv sync
 # Using pip
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Running the Application
@@ -58,8 +58,21 @@ python -m kokoro_tts.ui.gradio_app
 
 ### Testing
 
-There are no automated tests. Manual testing is required:
+The project has minimal automated tests for audiobook features located in the `tests/` directory.
 
+**Run automated tests:**
+```bash
+# Test audiobook front matter detection
+python tests/test_front_matter.py
+
+# Test audiobook intro generation
+python tests/test_intro_generation.py
+
+# Create a test EPUB file
+python tests/create_test_epub.py
+```
+
+**Manual testing** is required for most features:
 ```bash
 # Test basic text-to-speech
 uv run kokoro-tts input.txt output.wav --speed 1.2 --lang en-us --voice af_sarah
@@ -75,17 +88,24 @@ uv run kokoro-tts input.txt --stream --voice "af_sarah:60,am_adam:40"
 
 # Test stdin
 echo "Hello World" | uv run kokoro-tts - --stream
+
+# Test GPU acceleration
+uv run kokoro-tts input.txt output.wav --gpu --voice af_sarah
+
+# Test Web UI with GPU
+uv run kokoro-tts-ui --gpu
 ```
 
-### Building and Publishing
+See `tests/TESTING.md` for comprehensive testing documentation.
+
+### Building
 
 ```bash
-# Build package
+# Build package (if needed for local distribution)
 python -m build
-
-# Publish to PyPI (handled by GitHub Actions on release)
-# See .github/workflows/python-publish.yml
 ```
+
+Note: This is a fork, not published to PyPI.
 
 ## Architecture
 
@@ -98,6 +118,17 @@ kokoro_tts/
 └── ui/
     ├── __init__.py
     └── gradio_app.py    # Web UI implementation
+
+tests/
+├── README.md            # Testing documentation
+├── TESTING.md           # Comprehensive testing plan
+├── test_front_matter.py # Unit tests for front matter detection
+├── test_intro_generation.py # Unit tests for intro generation
+└── create_test_epub.py  # Test EPUB generation script
+
+scripts/
+├── README.md            # Scripts documentation
+└── convert_epubs_to_audiobooks.sh # Batch EPUB conversion
 ```
 
 ### Core Components
@@ -106,7 +137,9 @@ kokoro_tts/
 Refactored business logic providing reusable TTS functionality:
 
 1. **KokoroEngine Class**
-   - `load_model()`: Initialize Kokoro ONNX model
+   - `__init__(use_gpu, provider)`: Initialize with optional GPU settings
+   - `load_model()`: Initialize Kokoro ONNX model (sets GPU provider if requested)
+   - `_select_gpu_provider()`: Auto-select best available GPU provider (TensorRT > CUDA > ROCm > CoreML)
    - `get_voices()`: List available voices
    - `validate_language()`, `validate_voice()`: Input validation
    - `chunk_text()`: Smart text chunking at sentence boundaries
@@ -127,13 +160,22 @@ Refactored business logic providing reusable TTS functionality:
 3. **Progress Callbacks**
    - Engine accepts `progress_callback(message, current, total)` for UI updates
 
+4. **GPU Support**
+   - `use_gpu` parameter: When True, automatically selects best GPU provider
+   - `provider` parameter: Explicit provider name (takes precedence over use_gpu)
+   - GPU providers set via `ONNX_PROVIDER` environment variable
+   - Provider priority: TensorRT > CUDA > ROCm > CoreML
+   - Compatible with both onnxruntime and onnxruntime-gpu packages
+
 **CLI Module (`kokoro_tts/__init__.py`):**
 Legacy CLI implementation (unchanged for backward compatibility):
 
 1. **Input Processing**
    - `extract_text_from_epub()`: Basic EPUB text extraction
-   - `extract_chapters_from_epub()`: Advanced EPUB chapter extraction with TOC parsing (lines 271-473)
-   - `PdfParser` class: PDF processing with TOC and markdown-based extraction (lines 475-703)
+   - `extract_chapters_from_epub(skip_front_matter)`: Advanced EPUB chapter extraction with TOC parsing and optional front matter filtering
+   - `is_front_matter(title, order, word_count)`: Detects front matter chapters (copyright, TOC, etc.)
+   - `generate_audiobook_intro(metadata)`: Generates introduction text from book metadata
+   - `PdfParser` class: PDF processing with TOC and markdown-based extraction
    - Handles stdin cross-platform (Linux/macOS: `/dev/stdin`, `-`; Windows: `CONIN$`)
 
 2. **Text Chunking**
@@ -158,6 +200,9 @@ Legacy CLI implementation (unchanged for backward compatibility):
    - `main()`: Entry point with argument parsing (lines 1249-1392)
    - Validates options with typo suggestions using `difflib`
    - Interactive voice selection when not specified via CLI
+   - `--gpu` flag: Enables GPU acceleration (auto-selects best provider)
+   - `check_gpu_availability(use_gpu)`: Detects and configures GPU providers
+   - `print_gpu_info()`: Displays GPU status and recommendations
 
 ### Data Flow
 
@@ -185,7 +230,10 @@ Voices can be blended by:
 **EPUB Processing:**
 - First attempts TOC-based extraction via `ebooklib`
 - Falls back to document-by-document processing if TOC fails
-- Skips front matter (copyright, title page, cover)
+- Optional front matter filtering (enabled for audiobooks):
+  - Skips: copyright, TOC, acknowledgments, dedication, "about the author"
+  - Keeps: foreword, preface, introduction, prologue (considered story content)
+  - Uses `is_front_matter()` function with title, order, and word count heuristics
 - Extracts content between fragment IDs for precise chapter boundaries
 
 **PDF Processing:**
@@ -193,6 +241,27 @@ Voices can be blended by:
 - Uses `fitz` (PyMuPDF) for TOC-based extraction
 - Uses `pymupdf4llm` for markdown conversion when TOC unavailable
 - Filters duplicate entries and empty chapters
+
+**GPU Acceleration:**
+- Two methods: `--gpu` CLI flag (recommended) or `ONNX_PROVIDER` env variable
+- `--gpu` flag automatically selects best provider using priority: TensorRT > CUDA > ROCm > CoreML
+- Environment variable takes precedence over `--gpu` flag
+- Apple Silicon (CoreML) is auto-enabled by default on macOS
+- GPU provider is set via `ONNX_PROVIDER` environment variable before loading model
+- `kokoro-onnx` library respects the environment variable for provider selection
+- Compatible with both `onnxruntime` (CPU + CoreML) and `onnxruntime-gpu` (CUDA/TensorRT/ROCm)
+- Both packages can coexist; runtime selection based on `ONNX_PROVIDER`
+
+**Audiobook Processing:**
+- Automatic front matter detection and skipping (enabled by default with `--audiobook`)
+- Front matter keywords defined in `FRONT_MATTER_SKIP_KEYWORDS` constant
+- `is_front_matter()` uses title matching, position, and word count heuristics
+- Generated introduction chapter added automatically:
+  - Format: "This is [title], written by [author], narrated by Kokoro Text-to-Speech"
+  - Uses metadata from EPUB/PDF if available
+  - Can be customized with `--intro-text` or disabled with `--no-intro`
+- Introduction inserted as Chapter 0 before selected chapters
+- AudiobookOptions includes: `skip_front_matter`, `intro_text`, `no_intro`
 
 ## Project Configuration
 
@@ -202,7 +271,6 @@ Voices can be blended by:
 - `kokoro-onnx==0.4.9`: Core TTS model (pinned version)
 - `pymupdf` + `pymupdf4llm`: PDF processing
 - `sounddevice` + `soundfile`: Audio I/O
-- Development: `build`, `twine` for PyPI publishing
 
 **Important Notes:**
 - Language support is hardcoded in `SUPPORTED_LANGUAGES` constant (lines 29-41)
@@ -216,6 +284,8 @@ Voices can be blended by:
 **Optional Dependencies:**
 - `ui`: Gradio web interface (`pip install 'kokoro-tts[ui]'`)
   - `gradio>=4.0.0`: Web UI framework
+- `gpu`: GPU acceleration support (`pip install 'kokoro-tts[gpu]'`)
+  - `onnxruntime-gpu>=1.20.0`: ONNX runtime with CUDA/ROCm/TensorRT support
 
 **Model Files:**
 Required files (not in repo, downloaded separately):
@@ -296,19 +366,20 @@ engine.process_file("input.epub", "output.mp3", options)
 - Test with long texts to trigger phoneme errors
 - Ensure sample rate consistency across chunks
 
-## Release Process
+## Development Process
 
-1. Update version in `pyproject.toml`
-2. Update README.md if needed
-3. Commit with message following COMMIT_GUIDELINES.md
-4. Create GitHub release
-5. GitHub Actions automatically builds and publishes to PyPI
+1. Make changes on feature branches
+2. Test manually with relevant test cases
+3. Update README.md or CLAUDE.md if needed for significant changes
+4. Commit with descriptive messages
+5. Merge to `development` branch for testing
+6. Merge to `main` when stable
 
 ## Known Constraints
 
 - Python 3.9 not supported (requires 3.10+)
 - Model has phoneme length limit (~510 tokens)
 - Model files must be in working directory or specified via `--model` and `--voices`
-- No automated test suite (manual testing only)
+- Limited automated tests (only for audiobook features)
 - Single-threaded audio generation (no parallel chunk processing)
 - Language list is hardcoded and not dynamically retrieved from kokoro-onnx

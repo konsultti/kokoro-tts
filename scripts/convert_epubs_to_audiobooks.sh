@@ -11,10 +11,11 @@
 set -euo pipefail  # Exit on error in pipeline, undefined vars
 
 # Default parameters
-CHAPTERS_DIR="./audiobook"
-FORMAT="m4a"
+OUTPUT_DIR="."
+TEMP_DIR=""
 VOICE="af_sarah"
-CLEANUP=true
+KEEP_TEMP=false
+SELECT_CHAPTERS="all"
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,14 +29,16 @@ usage() {
     echo "Usage: $0 <epub_directory> [options]"
     echo ""
     echo "Options:"
-    echo "  --voice <voice>     Voice to use (default: af_sarah)"
-    echo "  --format <format>   Output format (default: m4a)"
-    echo "  --temp-dir <dir>    Temporary directory (default: ./audiobook)"
-    echo "  --no-cleanup        Don't clean up temporary files"
-    echo "  --help              Show this help message"
+    echo "  --voice <voice>          Voice to use (default: af_sarah)"
+    echo "  --output-dir <dir>       Output directory for audiobooks (default: current directory)"
+    echo "  --temp-dir <dir>         Custom temporary directory (optional)"
+    echo "  --select-chapters <sel>  Chapter selection: 'all', '1,3,5', '1-5' (default: all)"
+    echo "  --keep-temp              Keep temporary files after creation"
+    echo "  --help                   Show this help message"
     echo ""
     echo "Example:"
-    echo "  $0 /path/to/epubs --voice af_bella --no-cleanup"
+    echo "  $0 /path/to/epubs --voice af_bella --output-dir ./audiobooks"
+    echo "  $0 /path/to/epubs --select-chapters '1-5,10' --keep-temp"
     exit 1
 }
 
@@ -47,16 +50,20 @@ while [[ $# -gt 0 ]]; do
             VOICE="$2"
             shift 2
             ;;
-        --format)
-            FORMAT="$2"
+        --output-dir)
+            OUTPUT_DIR="$2"
             shift 2
             ;;
         --temp-dir)
-            CHAPTERS_DIR="$2"
+            TEMP_DIR="$2"
             shift 2
             ;;
-        --no-cleanup)
-            CLEANUP=false
+        --select-chapters)
+            SELECT_CHAPTERS="$2"
+            shift 2
+            ;;
+        --keep-temp)
+            KEEP_TEMP=true
             shift
             ;;
         --help)
@@ -93,18 +100,24 @@ if [ ${#EPUB_FILES[@]} -eq 0 ]; then
     exit 0
 fi
 
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
 # Print configuration
 echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║${NC}  Kokoro TTS - Batch EPUB to Audiobook Converter    ${BLUE}║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${GREEN}Configuration:${NC}"
-echo "  EPUB Directory: $EPUB_DIR"
-echo "  Voice:          $VOICE"
-echo "  Format:         $FORMAT"
-echo "  Temp Directory: $CHAPTERS_DIR"
-echo "  Cleanup:        $CLEANUP"
-echo "  Files Found:    ${#EPUB_FILES[@]}"
+echo "  EPUB Directory:    $EPUB_DIR"
+echo "  Output Directory:  $OUTPUT_DIR"
+echo "  Voice:             $VOICE"
+echo "  Chapter Selection: $SELECT_CHAPTERS"
+echo "  Keep Temp:         $KEEP_TEMP"
+if [ -n "$TEMP_DIR" ]; then
+    echo "  Temp Directory:    $TEMP_DIR"
+fi
+echo "  Files Found:       ${#EPUB_FILES[@]}"
 echo ""
 
 # Confirm before proceeding
@@ -134,20 +147,29 @@ for i in "${!EPUB_FILES[@]}"; do
     echo -e "${BLUE}Processing [$CURRENT/$TOTAL]: ${GREEN}$EPUB_BASENAME${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════${NC}"
 
-    # Expected output file
-    EXPECTED_OUTPUT="${CHAPTERS_DIR}/${EPUB_NAME}_Complete.${FORMAT}"
-    FINAL_OUTPUT="${EPUB_DIR}/${EPUB_NAME}.${FORMAT}"
+    # Output file in the output directory
+    AUDIOBOOK_OUTPUT="${OUTPUT_DIR}/${EPUB_NAME}.m4a"
 
     # Check if already processed
-    if [ -f "$FINAL_OUTPUT" ]; then
-        echo -e "${YELLOW}⊙ Audiobook already exists: $FINAL_OUTPUT${NC}"
+    if [ -f "$AUDIOBOOK_OUTPUT" ]; then
+        echo -e "${YELLOW}⊙ Audiobook already exists: $AUDIOBOOK_OUTPUT${NC}"
         echo -e "${YELLOW}⊙ Skipping...${NC}"
         SKIPPED=$((SKIPPED + 1))
         continue
     fi
 
-    # Create temporary directory
-    mkdir -p "$CHAPTERS_DIR"
+    # Build kokoro-tts command
+    KOKORO_CMD="python -m kokoro_tts \"$EPUB_FILE\" --audiobook \"$AUDIOBOOK_OUTPUT\" --voice \"$VOICE\" --select-chapters \"$SELECT_CHAPTERS\""
+
+    # Add optional temp-dir if specified
+    if [ -n "$TEMP_DIR" ]; then
+        KOKORO_CMD="$KOKORO_CMD --temp-dir \"$TEMP_DIR\""
+    fi
+
+    # Add keep-temp flag if requested
+    if [ "$KEEP_TEMP" = true ]; then
+        KOKORO_CMD="$KOKORO_CMD --keep-temp"
+    fi
 
     # Run kokoro-tts
     echo -e "${GREEN}► Starting conversion...${NC}"
@@ -155,7 +177,7 @@ for i in "${!EPUB_FILES[@]}"; do
 
     # Temporarily disable exit-on-error for this command to allow continuing to next book
     set +e
-    python -m kokoro_tts "$EPUB_FILE" --chapters "$CHAPTERS_DIR" --format "$FORMAT" --voice "$VOICE"
+    eval $KOKORO_CMD
     KOKORO_EXIT_CODE=$?
     set -e
 
@@ -164,29 +186,15 @@ for i in "${!EPUB_FILES[@]}"; do
     MINUTES=$((DURATION / 60))
     SECONDS=$((DURATION % 60))
 
-    if [ $KOKORO_EXIT_CODE -eq 0 ]; then
-        # Move the complete audiobook to source directory
-        if [ -f "$EXPECTED_OUTPUT" ]; then
-            mv "$EXPECTED_OUTPUT" "$FINAL_OUTPUT"
-            echo -e "${GREEN}✓ Success! Duration: ${MINUTES}m ${SECONDS}s${NC}"
-            echo -e "${GREEN}✓ Audiobook saved: $FINAL_OUTPUT${NC}"
+    if [ $KOKORO_EXIT_CODE -eq 0 ] && [ -f "$AUDIOBOOK_OUTPUT" ]; then
+        echo -e "${GREEN}✓ Success! Duration: ${MINUTES}m ${SECONDS}s${NC}"
+        echo -e "${GREEN}✓ Audiobook saved: $AUDIOBOOK_OUTPUT${NC}"
 
-            # Calculate file size
-            FILE_SIZE=$(du -h "$FINAL_OUTPUT" | cut -f1)
-            echo -e "${GREEN}✓ File size: $FILE_SIZE${NC}"
+        # Calculate file size
+        FILE_SIZE=$(du -h "$AUDIOBOOK_OUTPUT" | cut -f1)
+        echo -e "${GREEN}✓ File size: $FILE_SIZE${NC}"
 
-            # Cleanup chapter files if requested
-            if [ "$CLEANUP" = true ]; then
-                echo -e "${BLUE}► Cleaning up chapter files...${NC}"
-                rm -rf "${CHAPTERS_DIR}/Chapter_"*.${FORMAT}
-                echo -e "${GREEN}✓ Cleanup complete${NC}"
-            fi
-
-            SUCCESSFUL=$((SUCCESSFUL + 1))
-        else
-            echo -e "${RED}✗ Error: Expected output file not found: $EXPECTED_OUTPUT${NC}"
-            FAILED=$((FAILED + 1))
-        fi
+        SUCCESSFUL=$((SUCCESSFUL + 1))
     else
         echo -e "${RED}✗ Failed after ${MINUTES}m ${SECONDS}s (exit code: $KOKORO_EXIT_CODE)${NC}"
         FAILED=$((FAILED + 1))
@@ -208,16 +216,6 @@ if [ $FAILED -gt 0 ]; then
     echo -e "  ${RED}✗ Failed:      ${FAILED}${NC}"
 fi
 echo ""
-
-# Cleanup temp directory if empty and cleanup enabled
-if [ "$CLEANUP" = true ] && [ -d "$CHAPTERS_DIR" ]; then
-    if [ -z "$(ls -A "$CHAPTERS_DIR")" ]; then
-        rmdir "$CHAPTERS_DIR"
-        echo -e "${GREEN}✓ Removed empty temp directory${NC}"
-    else
-        echo -e "${YELLOW}⊙ Temp directory not empty, keeping: $CHAPTERS_DIR${NC}"
-    fi
-fi
 
 # Exit code based on results
 if [ $FAILED -gt 0 ]; then

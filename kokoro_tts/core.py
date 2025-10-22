@@ -77,6 +77,9 @@ class AudiobookOptions:
     year: Optional[str] = None
     genre: Optional[str] = None
     description: Optional[str] = None
+    skip_front_matter: bool = True
+    intro_text: Optional[str] = None
+    no_intro: bool = False
 
 
 class KokoroEngine:
@@ -90,7 +93,9 @@ class KokoroEngine:
         self,
         model_path: str = "kokoro-v1.0.onnx",
         voices_path: str = "voices-v1.0.bin",
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        use_gpu: bool = False,
+        provider: Optional[str] = None
     ):
         """Initialize the Kokoro TTS engine.
 
@@ -98,6 +103,8 @@ class KokoroEngine:
             model_path: Path to the Kokoro ONNX model file
             voices_path: Path to the voices binary file
             progress_callback: Optional callback for progress updates (message, current, total)
+            use_gpu: If True, automatically select the best available GPU provider
+            provider: Explicit provider name (e.g., 'CUDAExecutionProvider'). Takes precedence over use_gpu.
 
         Raises:
             FileNotFoundError: If model or voices files don't exist
@@ -107,6 +114,8 @@ class KokoroEngine:
         self.voices_path = voices_path
         self.progress_callback = progress_callback
         self.kokoro: Optional[Kokoro] = None
+        self.use_gpu = use_gpu
+        self.provider = provider
 
         # Check files exist
         if not os.path.exists(model_path):
@@ -117,11 +126,48 @@ class KokoroEngine:
     def load_model(self):
         """Load the Kokoro model.
 
+        Sets up GPU provider if requested before loading the model.
+
         Raises:
             Exception: If model fails to load
         """
         if self.kokoro is None:
+            # Setup GPU provider if requested
+            if self.provider:
+                # Explicit provider specified
+                os.environ['ONNX_PROVIDER'] = self.provider
+            elif self.use_gpu:
+                # Auto-select best GPU provider
+                selected_provider = self._select_gpu_provider()
+                if selected_provider:
+                    os.environ['ONNX_PROVIDER'] = selected_provider
+                else:
+                    raise RuntimeError("GPU requested but no compatible GPU provider found")
+
             self.kokoro = Kokoro(self.model_path, self.voices_path)
+
+    def _select_gpu_provider(self) -> Optional[str]:
+        """Select the best available GPU provider.
+
+        Returns:
+            Provider name or None if no GPU available
+        """
+        try:
+            import onnxruntime as ort
+            available_providers = ort.get_available_providers()
+
+            # Priority: TensorRT > CUDA > ROCm > CoreML
+            if 'TensorrtExecutionProvider' in available_providers:
+                return 'TensorrtExecutionProvider'
+            elif 'CUDAExecutionProvider' in available_providers:
+                return 'CUDAExecutionProvider'
+            elif 'ROCMExecutionProvider' in available_providers:
+                return 'ROCMExecutionProvider'
+            elif 'CoreMLExecutionProvider' in available_providers:
+                return 'CoreMLExecutionProvider'
+        except Exception:
+            pass
+        return None
 
     def get_voices(self) -> List[str]:
         """Get list of available voices.

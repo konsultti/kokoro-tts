@@ -1,10 +1,23 @@
 # Kokoro TTS
 
-A text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents.
+A text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents. Available as both a **CLI** and **Web UI**.
 
-Available as both a **CLI** and **Web UI**.
+**This is a fork from https://github.com/nazdridoy/kokoro-tts**
 
-![ngpt-s-c](https://raw.githubusercontent.com/nazdridoy/kokoro-tts/main/previews/kokoro-tts-h.png)
+**Major upgrades from original:**
+- Fixed critical memory leak
+- Improved performance
+- Added AAC M4A output
+- Updated dependencies
+- Web-UI added
+- New CLI features, like --audiobook
+- Include metadata to audiobook file
+- Improved GPU support (Nvidia, AMD)
+- Autoskip extra content when creating audiobook
+- Light testing framework added
+
+All new features are coded by Claude Code.
+
 
 ## Features
 
@@ -20,19 +33,17 @@ Available as both a **CLI** and **Web UI**.
 - 🚀 **GPU Acceleration**: CUDA, TensorRT, ROCm, CoreML support
 - 🖥️ **Web UI**: Easy-to-use Gradio interface with voice preview and blending
 
-## Demo
-
-Kokoro TTS is an open-source CLI tool that delivers high-quality text-to-speech right from your terminal. Think of it as your personal voice studio, capable of transforming any text into natural-sounding speech with minimal effort.
-
-https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
-
-[Demo Audio (MP3)](https://github.com/nazdridoy/kokoro-tts/raw/main/previews/demo.mp3) | [Demo Audio (WAV)](https://github.com/nazdridoy/kokoro-tts/raw/main/previews/demo.wav)
 
 ## TODO
 
 - [x] Add GPU support
 - [x] Add PDF support
-- [x] Add GUI/Web UI
+- [x] Add Web UI
+- [ ] Improve Web UI (chapter selection etc)
+- [ ] Add native GUI
+- [ ] Improve test framework
+- [ ] Comprehensive testing
+
 
 ## Prerequisites
 
@@ -40,26 +51,25 @@ https://github.com/user-attachments/assets/8413e640-59e9-490e-861d-49187e967526
 
 ## Installation
 
-### Method 1: Install from PyPI (Recommended)
+### Method 1: Install from Git (Recommended)
 
-The easiest way to install Kokoro TTS is from PyPI:
+Install directly from this fork to get the latest features:
 
-**CLI Only:**
 ```bash
 # Using uv (recommended)
-uv tool install kokoro-tts
+uv tool install git+https://github.com/konsultti/kokoro-tts
 
-# Using pip
-pip install kokoro-tts
-```
+# Using pip - CLI only
+pip install git+https://github.com/konsultti/kokoro-tts
 
-**CLI + Web UI:**
-```bash
-# Using pip with UI dependencies
-pip install 'kokoro-tts[ui]'
+# Using pip - CLI + Web UI
+pip install 'git+https://github.com/konsultti/kokoro-tts[ui]'
 
-# Or with uv
-uv pip install 'kokoro-tts[ui]'
+# Using pip - CLI + GPU support
+pip install 'git+https://github.com/konsultti/kokoro-tts[gpu]'
+
+# Using pip - CLI + Web UI + GPU support
+pip install 'git+https://github.com/konsultti/kokoro-tts[ui,gpu]'
 ```
 
 After installation, you can run:
@@ -71,23 +81,11 @@ kokoro-tts --help
 kokoro-tts-ui
 ```
 
-### Method 2: Install from Git
-
-Install directly from the repository:
-
-```bash
-# Using uv (recommended)
-uv tool install git+https://github.com/nazdridoy/kokoro-tts
-
-# Using pip
-pip install git+https://github.com/nazdridoy/kokoro-tts
-```
-
-### Method 3: Clone and Install Locally
+### Method 2: Clone and Install Locally
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/nazdridoy/kokoro-tts.git
+git clone https://github.com/konsultti/kokoro-tts.git
 cd kokoro-tts
 ```
 
@@ -115,13 +113,13 @@ uv run kokoro-tts --help
 kokoro-tts --help
 ```
 
-### Method 4: Run Without Installation
+### Method 3: Run Without Installation
 
 If you prefer to run without installing:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/nazdridoy/kokoro-tts.git
+git clone https://github.com/konsultti/kokoro-tts.git
 cd kokoro-tts
 ```
 
@@ -137,7 +135,7 @@ uv sync
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 3. Run directly:
@@ -155,13 +153,13 @@ After installation, download the required model files to your working directory:
 
 ```bash
 # Download voice data (bin format is preferred)
-wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 
 # Download the model
-wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.0.onnx
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 ```
 
-> The script requires `voices-v1.0.bin` and `kokoro-v1.0.onnx` to be present in the same directory where you run the `kokoro-tts` command.
+> **Note:** The script requires `voices-v1.0.bin` and `kokoro-v1.0.onnx` to be present in the same directory where you run the `kokoro-tts` command. The models are downloaded from the upstream [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) repository.
 
 ### GPU Acceleration (Optional)
 
@@ -188,21 +186,38 @@ export ONNX_PROVIDER=CPUExecutionProvider
 
 #### NVIDIA/AMD GPUs (Linux/Windows)
 
-1. **Replace onnxruntime with onnxruntime-gpu**:
+**Method 1: Using the `--gpu` flag (Recommended)**
 
-Since `kokoro-onnx` installs the CPU-only `onnxruntime` by default, you need to replace it:
+1. **Install with GPU support**:
 
 ```bash
 # Using pip
-pip uninstall -y onnxruntime
-pip install onnxruntime-gpu
+pip install 'kokoro-tts[gpu]'
 
 # Using uv
-uv pip uninstall onnxruntime
-uv pip install onnxruntime-gpu
+uv pip install 'kokoro-tts[gpu]'
+
+# Or install git version with GPU support
+pip install 'git+https://github.com/konsultti/kokoro-tts[gpu]'
 ```
 
-2. **Set environment variable**:
+This installs `onnxruntime-gpu` alongside the CPU version, allowing you to choose at runtime.
+
+2. **Use the `--gpu` flag**:
+
+```bash
+# Enable GPU acceleration automatically
+kokoro-tts input.txt output.wav --voice af_sarah --gpu
+
+# Web UI with GPU
+kokoro-tts-ui --gpu
+```
+
+The `--gpu` flag automatically selects the best available GPU provider (TensorRT > CUDA > ROCm).
+
+**Method 2: Environment Variable (Advanced)**
+
+If you prefer manual control or need to specify a particular provider:
 
 ```bash
 # For CUDA/NVIDIA GPUs
@@ -213,11 +228,8 @@ export ONNX_PROVIDER=TensorrtExecutionProvider
 
 # For ROCm/AMD GPUs
 export ONNX_PROVIDER=ROCMExecutionProvider
-```
 
-3. **Run kokoro-tts as usual**:
-
-```bash
+# Then run normally (no --gpu flag needed)
 kokoro-tts input.txt output.wav --voice af_sarah
 ```
 
@@ -225,8 +237,9 @@ kokoro-tts input.txt output.wav --voice af_sarah
 
 - GPU acceleration provides **~20-40% speed improvement** over CPU
 - **Apple Silicon (M1/M2/M3/M4)**: CoreML Neural Engine acceleration is **automatically enabled** - no setup required!
-- **NVIDIA/AMD GPUs**: Requires `onnxruntime-gpu` installation and `ONNX_PROVIDER` environment variable
+- **NVIDIA/AMD GPUs**: Use `--gpu` flag (recommended) or set `ONNX_PROVIDER` environment variable
 - The tool will automatically detect available GPU providers and show their status
+- Installation with `[gpu]` extra allows runtime selection between CPU and GPU (no need to uninstall anything)
 - You need appropriate GPU drivers installed (CUDA for NVIDIA, ROCm for AMD)
 - In WSL2, you may see a harmless warning about device discovery - this doesn't prevent GPU usage
 
@@ -404,6 +417,55 @@ kokoro-tts input.pdf output.m4a --speed 1.2 --lang en-us --voice af_sarah --form
 # Process PDF and split into chunks
 kokoro-tts input.pdf --split-output ./chunks/ --format mp3
 ```
+
+#### Audiobook Creation (M4A with Metadata)
+
+Create professional M4A audiobooks with embedded metadata, cover art, and chapter markers:
+
+```bash
+# Basic audiobook creation
+kokoro-tts book.epub --audiobook audiobook.m4a
+
+# With custom metadata
+kokoro-tts book.epub --audiobook output.m4a \
+  --title "My Book" \
+  --author "John Doe" \
+  --narrator "Kokoro TTS"
+
+# Skip front matter (copyright, TOC, etc.) - enabled by default
+kokoro-tts book.epub --audiobook output.m4a --skip-front-matter
+
+# Custom introduction text
+kokoro-tts book.epub --audiobook output.m4a \
+  --intro-text "Welcome to this audiobook presentation"
+
+# Skip auto-generated introduction
+kokoro-tts book.epub --audiobook output.m4a --no-intro
+
+# Select specific chapters
+kokoro-tts book.epub --audiobook output.m4a --select-chapters "1-5,10"
+
+# With custom cover image
+kokoro-tts book.epub --audiobook output.m4a --cover cover.jpg
+
+# Full example with all options
+kokoro-tts book.epub --audiobook output.m4a \
+  --title "The Great Novel" \
+  --author "Jane Smith" \
+  --narrator "Kokoro Sarah" \
+  --voice af_sarah \
+  --speed 1.1 \
+  --cover cover.jpg \
+  --select-chapters "all" \
+  --skip-front-matter
+```
+
+**Audiobook Features:**
+- **Auto-skip front matter**: Automatically skips copyright pages, table of contents, acknowledgments, etc.
+- **Generated introduction**: Adds "This is [title], written by [author], narrated by Kokoro Text-to-Speech"
+- **Keeps story content**: Foreword, Preface, Introduction, and Prologue chapters are preserved
+- **Chapter markers**: Embedded chapter navigation in M4A file
+- **Metadata**: Title, author, narrator, cover art, and more
 
 #### Custom Model Paths
 
