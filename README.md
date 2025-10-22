@@ -1,20 +1,20 @@
 # Kokoro TTS
 
-This is a fork from https://github.com/nazdridoy/kokoro-tts
+A text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents. Available as both a **CLI** and **Web UI**.
 
-Major upgrades are:
+**This is a fork from https://github.com/nazdridoy/kokoro-tts**
+
+*Major upgrades from original:*
+- Fixed critical memory leak
+- Improved performance
+- Added AAC M4A outout
 - Updated dependencies
 - Web-UI added
 - New CLI features, like --audiobook
-- Include metadata to audiobook
+- Include metadata to audiobook file
 - Improved GPU support (Nvidia, AMD)
 
 All new features are coded by Claude Code.
-
-
-A text-to-speech tool using the Kokoro model, supporting multiple languages, voices (with blending), and various input formats including EPUB books and PDF documents.
-
-Available as both a **CLI** and **Web UI**.
 
 
 ## Features
@@ -36,7 +36,9 @@ Available as both a **CLI** and **Web UI**.
 
 - [x] Add GPU support
 - [x] Add PDF support
-- [x] Add GUI/Web UI
+- [x] Add Web UI
+- [] Improve Web UI (chapter selection etc)
+- [] Add native GUI
 
 ## Prerequisites
 
@@ -57,6 +59,12 @@ pip install git+https://github.com/konsultti/kokoro-tts
 
 # Using pip - CLI + Web UI
 pip install 'git+https://github.com/konsultti/kokoro-tts[ui]'
+
+# Using pip - CLI + GPU support
+pip install 'git+https://github.com/konsultti/kokoro-tts[gpu]'
+
+# Using pip - CLI + Web UI + GPU support
+pip install 'git+https://github.com/konsultti/kokoro-tts[ui,gpu]'
 ```
 
 After installation, you can run:
@@ -140,10 +148,10 @@ After installation, download the required model files to your working directory:
 
 ```bash
 # Download voice data (bin format is preferred)
-wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/v0.5.0/voices.bin -O voices-v1.0.bin
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 
 # Download the model
-wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/v0.5.0/kokoro-v0.19.onnx -O kokoro-v1.0.onnx
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 ```
 
 > **Note:** The script requires `voices-v1.0.bin` and `kokoro-v1.0.onnx` to be present in the same directory where you run the `kokoro-tts` command. The models are downloaded from the upstream [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) repository.
@@ -173,21 +181,38 @@ export ONNX_PROVIDER=CPUExecutionProvider
 
 #### NVIDIA/AMD GPUs (Linux/Windows)
 
-1. **Replace onnxruntime with onnxruntime-gpu**:
+**Method 1: Using the `--gpu` flag (Recommended)**
 
-Since `kokoro-onnx` installs the CPU-only `onnxruntime` by default, you need to replace it:
+1. **Install with GPU support**:
 
 ```bash
 # Using pip
-pip uninstall -y onnxruntime
-pip install onnxruntime-gpu
+pip install 'kokoro-tts[gpu]'
 
 # Using uv
-uv pip uninstall onnxruntime
-uv pip install onnxruntime-gpu
+uv pip install 'kokoro-tts[gpu]'
+
+# Or install git version with GPU support
+pip install 'git+https://github.com/konsultti/kokoro-tts[gpu]'
 ```
 
-2. **Set environment variable**:
+This installs `onnxruntime-gpu` alongside the CPU version, allowing you to choose at runtime.
+
+2. **Use the `--gpu` flag**:
+
+```bash
+# Enable GPU acceleration automatically
+kokoro-tts input.txt output.wav --voice af_sarah --gpu
+
+# Web UI with GPU
+kokoro-tts-ui --gpu
+```
+
+The `--gpu` flag automatically selects the best available GPU provider (TensorRT > CUDA > ROCm).
+
+**Method 2: Environment Variable (Advanced)**
+
+If you prefer manual control or need to specify a particular provider:
 
 ```bash
 # For CUDA/NVIDIA GPUs
@@ -198,11 +223,8 @@ export ONNX_PROVIDER=TensorrtExecutionProvider
 
 # For ROCm/AMD GPUs
 export ONNX_PROVIDER=ROCMExecutionProvider
-```
 
-3. **Run kokoro-tts as usual**:
-
-```bash
+# Then run normally (no --gpu flag needed)
 kokoro-tts input.txt output.wav --voice af_sarah
 ```
 
@@ -210,8 +232,9 @@ kokoro-tts input.txt output.wav --voice af_sarah
 
 - GPU acceleration provides **~20-40% speed improvement** over CPU
 - **Apple Silicon (M1/M2/M3/M4)**: CoreML Neural Engine acceleration is **automatically enabled** - no setup required!
-- **NVIDIA/AMD GPUs**: Requires `onnxruntime-gpu` installation and `ONNX_PROVIDER` environment variable
+- **NVIDIA/AMD GPUs**: Use `--gpu` flag (recommended) or set `ONNX_PROVIDER` environment variable
 - The tool will automatically detect available GPU providers and show their status
+- Installation with `[gpu]` extra allows runtime selection between CPU and GPU (no need to uninstall anything)
 - You need appropriate GPU drivers installed (CUDA for NVIDIA, ROCm for AMD)
 - In WSL2, you may see a harmless warning about device discovery - this doesn't prevent GPU usage
 

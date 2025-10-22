@@ -30,16 +30,19 @@ class KokoroUI:
     def __init__(
         self,
         model_path: str = "kokoro-v1.0.onnx",
-        voices_path: str = "voices-v1.0.bin"
+        voices_path: str = "voices-v1.0.bin",
+        use_gpu: bool = False
     ):
         """Initialize UI with model paths.
 
         Args:
             model_path: Path to Kokoro ONNX model
             voices_path: Path to voices binary file
+            use_gpu: Enable GPU acceleration if available
         """
         self.model_path = model_path
         self.voices_path = voices_path
+        self.use_gpu = use_gpu
         self.engine: Optional[KokoroEngine] = None
         self.voices_list: List[str] = []
 
@@ -51,10 +54,16 @@ class KokoroUI:
         """
         try:
             if self.engine is None:
-                self.engine = KokoroEngine(self.model_path, self.voices_path)
+                self.engine = KokoroEngine(
+                    self.model_path,
+                    self.voices_path,
+                    use_gpu=self.use_gpu
+                )
                 self.engine.load_model()
                 self.voices_list = sorted(self.engine.get_voices())
-            return f"✓ Engine loaded successfully with {len(self.voices_list)} voices"
+
+                gpu_status = " (GPU enabled)" if self.use_gpu else ""
+                return f"✓ Engine loaded successfully with {len(self.voices_list)} voices{gpu_status}"
         except Exception as e:
             return f"✗ Error loading engine: {str(e)}"
 
@@ -256,7 +265,8 @@ class KokoroUI:
 def create_ui(
     model_path: str = "kokoro-v1.0.onnx",
     voices_path: str = "voices-v1.0.bin",
-    share: bool = False
+    share: bool = False,
+    use_gpu: bool = False
 ) -> gr.Blocks:
     """Create the Gradio UI interface.
 
@@ -264,11 +274,12 @@ def create_ui(
         model_path: Path to Kokoro model
         voices_path: Path to voices file
         share: Whether to create a public share link
+        use_gpu: Enable GPU acceleration if available
 
     Returns:
         Gradio Blocks interface
     """
-    ui = KokoroUI(model_path, voices_path)
+    ui = KokoroUI(model_path, voices_path, use_gpu=use_gpu)
 
     # Custom CSS for better styling
     custom_css = """
@@ -534,7 +545,8 @@ def launch_ui(
     voices_path: str = "voices-v1.0.bin",
     server_name: str = "127.0.0.1",
     server_port: int = 7860,
-    share: bool = False
+    share: bool = False,
+    use_gpu: bool = False
 ):
     """Launch the Gradio web UI.
 
@@ -548,6 +560,7 @@ def launch_ui(
         server_name: Server hostname
         server_port: Server port
         share: Create public share link
+        use_gpu: Enable GPU acceleration if available
     """
     # If called as entry point, parse args
     import sys
@@ -559,6 +572,7 @@ def launch_ui(
         parser.add_argument("--server-name", default=server_name, help="Server hostname")
         parser.add_argument("--server-port", type=int, default=server_port, help="Server port")
         parser.add_argument("--share", action="store_true", help="Create public share link")
+        parser.add_argument("--gpu", action="store_true", help="Enable GPU acceleration")
         args = parser.parse_args()
 
         model_path = args.model
@@ -566,8 +580,9 @@ def launch_ui(
         server_name = args.server_name
         server_port = args.server_port
         share = args.share
+        use_gpu = args.gpu
 
-    demo = create_ui(model_path, voices_path, share)
+    demo = create_ui(model_path, voices_path, share, use_gpu)
     demo.launch(
         server_name=server_name,
         server_port=server_port,

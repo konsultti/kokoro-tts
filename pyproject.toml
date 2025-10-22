@@ -37,6 +37,9 @@ dependencies = [
 ui = [
     "gradio>=4.0.0",
 ]
+gpu = [
+    "onnxruntime-gpu>=1.20.0",
+]
 
 [project.scripts]
 kokoro-tts = "kokoro_tts:main"

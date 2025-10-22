@@ -75,6 +75,12 @@ uv run kokoro-tts input.txt --stream --voice "af_sarah:60,am_adam:40"
 
 # Test stdin
 echo "Hello World" | uv run kokoro-tts - --stream
+
+# Test GPU acceleration
+uv run kokoro-tts input.txt output.wav --gpu --voice af_sarah
+
+# Test Web UI with GPU
+uv run kokoro-tts-ui --gpu
 ```
 
 ### Building and Publishing
@@ -106,7 +112,9 @@ kokoro_tts/
 Refactored business logic providing reusable TTS functionality:
 
 1. **KokoroEngine Class**
-   - `load_model()`: Initialize Kokoro ONNX model
+   - `__init__(use_gpu, provider)`: Initialize with optional GPU settings
+   - `load_model()`: Initialize Kokoro ONNX model (sets GPU provider if requested)
+   - `_select_gpu_provider()`: Auto-select best available GPU provider (TensorRT > CUDA > ROCm > CoreML)
    - `get_voices()`: List available voices
    - `validate_language()`, `validate_voice()`: Input validation
    - `chunk_text()`: Smart text chunking at sentence boundaries
@@ -126,6 +134,13 @@ Refactored business logic providing reusable TTS functionality:
 
 3. **Progress Callbacks**
    - Engine accepts `progress_callback(message, current, total)` for UI updates
+
+4. **GPU Support**
+   - `use_gpu` parameter: When True, automatically selects best GPU provider
+   - `provider` parameter: Explicit provider name (takes precedence over use_gpu)
+   - GPU providers set via `ONNX_PROVIDER` environment variable
+   - Provider priority: TensorRT > CUDA > ROCm > CoreML
+   - Compatible with both onnxruntime and onnxruntime-gpu packages
 
 **CLI Module (`kokoro_tts/__init__.py`):**
 Legacy CLI implementation (unchanged for backward compatibility):
@@ -158,6 +173,9 @@ Legacy CLI implementation (unchanged for backward compatibility):
    - `main()`: Entry point with argument parsing (lines 1249-1392)
    - Validates options with typo suggestions using `difflib`
    - Interactive voice selection when not specified via CLI
+   - `--gpu` flag: Enables GPU acceleration (auto-selects best provider)
+   - `check_gpu_availability(use_gpu)`: Detects and configures GPU providers
+   - `print_gpu_info()`: Displays GPU status and recommendations
 
 ### Data Flow
 
@@ -194,6 +212,16 @@ Voices can be blended by:
 - Uses `pymupdf4llm` for markdown conversion when TOC unavailable
 - Filters duplicate entries and empty chapters
 
+**GPU Acceleration:**
+- Two methods: `--gpu` CLI flag (recommended) or `ONNX_PROVIDER` env variable
+- `--gpu` flag automatically selects best provider using priority: TensorRT > CUDA > ROCm > CoreML
+- Environment variable takes precedence over `--gpu` flag
+- Apple Silicon (CoreML) is auto-enabled by default on macOS
+- GPU provider is set via `ONNX_PROVIDER` environment variable before loading model
+- `kokoro-onnx` library respects the environment variable for provider selection
+- Compatible with both `onnxruntime` (CPU + CoreML) and `onnxruntime-gpu` (CUDA/TensorRT/ROCm)
+- Both packages can coexist; runtime selection based on `ONNX_PROVIDER`
+
 ## Project Configuration
 
 **Dependencies** (pyproject.toml):
@@ -216,6 +244,8 @@ Voices can be blended by:
 **Optional Dependencies:**
 - `ui`: Gradio web interface (`pip install 'kokoro-tts[ui]'`)
   - `gradio>=4.0.0`: Web UI framework
+- `gpu`: GPU acceleration support (`pip install 'kokoro-tts[gpu]'`)
+  - `onnxruntime-gpu>=1.20.0`: ONNX runtime with CUDA/ROCm/TensorRT support
 
 **Model Files:**
 Required files (not in repo, downloaded separately):

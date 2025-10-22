@@ -45,8 +45,15 @@ SUPPORTED_LANGUAGES = [
 stop_spinner = False
 stop_audio = False
 
-def check_gpu_availability():
-    """Check if GPU is available and provide helpful information."""
+def check_gpu_availability(use_gpu=False):
+    """Check if GPU is available and provide helpful information.
+
+    Args:
+        use_gpu: If True, automatically select the best available GPU provider
+
+    Returns:
+        Dictionary with GPU availability information and selected provider
+    """
     import importlib.metadata
     import onnxruntime as ort
 
@@ -59,6 +66,19 @@ def check_gpu_availability():
     has_coreml = 'CoreMLExecutionProvider' in available_providers
 
     onnx_provider_env = os.getenv('ONNX_PROVIDER')
+
+    # If use_gpu is True and no env variable set, select best available provider
+    selected_provider = onnx_provider_env
+    if use_gpu and not onnx_provider_env:
+        # Priority: TensorRT > CUDA > ROCm > CoreML > None
+        if has_tensorrt:
+            selected_provider = 'TensorrtExecutionProvider'
+        elif has_cuda:
+            selected_provider = 'CUDAExecutionProvider'
+        elif has_rocm:
+            selected_provider = 'ROCMExecutionProvider'
+        elif has_coreml:
+            selected_provider = 'CoreMLExecutionProvider'
 
     try:
         # Check if onnxruntime-gpu is installed
@@ -73,7 +93,8 @@ def check_gpu_availability():
             'has_rocm': has_rocm,
             'has_coreml': has_coreml,
             'env_provider': onnx_provider_env,
-            'will_use_gpu': onnx_provider_env in ['CUDAExecutionProvider', 'TensorrtExecutionProvider', 'ROCMExecutionProvider', 'CoreMLExecutionProvider'] if onnx_provider_env else False
+            'selected_provider': selected_provider,
+            'will_use_gpu': selected_provider in ['CUDAExecutionProvider', 'TensorrtExecutionProvider', 'ROCMExecutionProvider', 'CoreMLExecutionProvider'] if selected_provider else False
         }
     except importlib.metadata.PackageNotFoundError:
         # onnxruntime-gpu not installed, but check if standard onnxruntime has CoreML
@@ -86,18 +107,57 @@ def check_gpu_availability():
             'has_rocm': has_rocm,
             'has_coreml': has_coreml,
             'env_provider': onnx_provider_env,
-            'will_use_gpu': onnx_provider_env == 'CoreMLExecutionProvider' if onnx_provider_env else False
+            'selected_provider': selected_provider,
+            'will_use_gpu': selected_provider in ['CoreMLExecutionProvider'] if selected_provider else False
         }
 
-def print_gpu_info(gpu_info, auto_enabled=False):
-    """Print GPU availability information."""
-    if gpu_info['env_provider']:
-        if auto_enabled:
-            print(f"GPU acceleration: Using {gpu_info['env_provider']} (auto-enabled)")
-        else:
-            print(f"GPU acceleration: Using {gpu_info['env_provider']} (set via ONNX_PROVIDER)")
+def print_gpu_info(gpu_info, auto_enabled=False, requested_gpu=False):
+    """Print GPU availability information.
+
+    Args:
+        gpu_info: Dictionary with GPU availability info
+        auto_enabled: Whether GPU was auto-enabled
+        requested_gpu: Whether user explicitly requested GPU via --gpu flag
+    """
+    selected_provider = gpu_info.get('selected_provider')
+
+    if selected_provider:
+        if gpu_info['env_provider']:
+            # Provider set via environment variable
+            print(f"GPU acceleration: Using {selected_provider} (set via ONNX_PROVIDER)")
+        elif requested_gpu:
+            # Provider auto-selected due to --gpu flag
+            print(f"GPU acceleration: Using {selected_provider} (auto-selected via --gpu flag)")
+        elif auto_enabled:
+            print(f"GPU acceleration: Using {selected_provider} (auto-enabled)")
         return
 
+    # If user requested GPU but no provider available
+    if requested_gpu:
+        print("GPU acceleration: Requested but not available")
+        # Check for available acceleration providers
+        providers = []
+        if gpu_info['has_cuda']:
+            providers.append('CUDA')
+        if gpu_info['has_tensorrt']:
+            providers.append('TensorRT')
+        if gpu_info['has_rocm']:
+            providers.append('ROCm')
+        if gpu_info['has_coreml']:
+            providers.append('CoreML')
+
+        if not gpu_info['gpu_package_installed'] and (gpu_info['has_cuda'] or gpu_info['has_tensorrt'] or gpu_info['has_rocm']):
+            print("  Error: --gpu requires onnxruntime-gpu installation for CUDA/TensorRT/ROCm")
+            print("  Install with: pip install 'kokoro-tts[gpu]'")
+            print("  Or: pip install onnxruntime-gpu")
+        elif not providers:
+            print("  No GPU providers detected")
+            if not gpu_info['gpu_package_installed']:
+                print("  CUDA/ROCm users: pip install 'kokoro-tts[gpu]'")
+                print("  Apple Silicon users: CoreML should be available automatically")
+        return
+
+    # No GPU selected or requested
     # Check for available acceleration providers
     providers = []
     if gpu_info['has_cuda']:
@@ -111,9 +171,9 @@ def print_gpu_info(gpu_info, auto_enabled=False):
 
     if providers:
         print(f"GPU acceleration: Available ({', '.join(providers)}) but not enabled")
-        print("  To enable acceleration, set environment variable:")
+        print("  To enable, use --gpu flag or set environment variable:")
         if gpu_info['has_coreml']:
-            print("    export ONNX_PROVIDER=CoreMLExecutionProvider  # For Apple Silicon (M1/M2/M3)")
+            print("    export ONNX_PROVIDER=CoreMLExecutionProvider  # For Apple Silicon")
         if gpu_info['has_cuda']:
             print("    export ONNX_PROVIDER=CUDAExecutionProvider")
         if gpu_info['has_tensorrt']:
@@ -124,7 +184,7 @@ def print_gpu_info(gpu_info, auto_enabled=False):
         print("GPU acceleration: onnxruntime-gpu installed but no GPU detected")
     else:
         print("GPU acceleration: Not available")
-        print("  CUDA/ROCm users: pip install onnxruntime-gpu")
+        print("  CUDA/ROCm users: pip install 'kokoro-tts[gpu]'")
         print("  Apple Silicon users: CoreML support available in standard onnxruntime")
 
 def check_required_files(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
@@ -293,6 +353,7 @@ Options:
     --split-output <dir> Save each chunk as separate file in directory
     --chapters <dir>    Save one audio file per chapter in directory (memory efficient)
     --format <str>      Audio format: wav, mp3, or m4a (default: wav)
+    --gpu               Enable GPU acceleration (requires onnxruntime-gpu installation)
     --debug             Show detailed debug information
     --model <path>      Path to kokoro-v1.0.onnx model file (default: ./kokoro-v1.0.onnx)
     --voices <path>     Path to voices-v1.0.bin file (default: ./voices-v1.0.bin)
@@ -977,7 +1038,7 @@ def process_chunk_sequential(chunk: str, kokoro: Kokoro, voice: str, speed: floa
 
 def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, lang="en-us",
                          stream=False, split_output=None, chapters_output=None, format="wav", debug=False, stdin_indicators=None,
-                         model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
+                         model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin", use_gpu=False):
     global stop_spinner
     
     # Define stdin indicators if not provided
@@ -990,17 +1051,26 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
     # Load Kokoro model
     try:
         # Check and display GPU availability before loading model
-        gpu_info = check_gpu_availability()
+        gpu_info = check_gpu_availability(use_gpu=use_gpu)
 
-        # Auto-enable CoreML on macOS if available and no provider is set
+        # Auto-enable CoreML on macOS if available and no provider is set (unless user explicitly requested GPU)
         auto_enabled = False
-        if gpu_info['has_coreml'] and not gpu_info['env_provider']:
+        if not use_gpu and gpu_info['has_coreml'] and not gpu_info['env_provider']:
             os.environ['ONNX_PROVIDER'] = 'CoreMLExecutionProvider'
-            gpu_info['env_provider'] = 'CoreMLExecutionProvider'
+            gpu_info['selected_provider'] = 'CoreMLExecutionProvider'
             auto_enabled = True
 
-        print_gpu_info(gpu_info, auto_enabled)
+        # If GPU was requested or auto-selected, set the environment variable
+        if gpu_info.get('selected_provider') and not gpu_info.get('env_provider'):
+            os.environ['ONNX_PROVIDER'] = gpu_info['selected_provider']
+
+        print_gpu_info(gpu_info, auto_enabled, requested_gpu=use_gpu)
         print()  # Blank line for readability
+
+        # Exit with error if --gpu was requested but no provider is available
+        if use_gpu and not gpu_info.get('selected_provider'):
+            print("\nError: Cannot enable GPU acceleration. No compatible GPU provider found.")
+            sys.exit(1)
 
         kokoro = Kokoro(model_path, voices_path)
 
@@ -1697,6 +1767,7 @@ def get_valid_options():
         '--split-output',
         '--chapters',
         '--format',
+        '--gpu',
         '--debug',
         '--model',
         '--voices',
@@ -1802,6 +1873,7 @@ def main():
     split_output = None
     chapters_output = None
     format = "wav"  # default format
+    use_gpu = '--gpu' in sys.argv
     merge_chunks = '--merge-chunks' in sys.argv
     model_path = "kokoro-v1.0.onnx"  # default model path
     voices_path = "voices-v1.0.bin"  # default voices path
@@ -2004,6 +2076,28 @@ def main():
             # Use existing chapter processing by setting chapters_output to temp dir
             # We need to process chapters manually to maintain control
             from kokoro_onnx import Kokoro
+
+            # Setup GPU if requested
+            gpu_info = check_gpu_availability(use_gpu=use_gpu)
+
+            # Auto-enable CoreML on macOS if available and no provider is set (unless user explicitly requested GPU)
+            auto_enabled = False
+            if not use_gpu and gpu_info['has_coreml'] and not gpu_info['env_provider']:
+                os.environ['ONNX_PROVIDER'] = 'CoreMLExecutionProvider'
+                gpu_info['selected_provider'] = 'CoreMLExecutionProvider'
+                auto_enabled = True
+
+            # If GPU was requested or auto-selected, set the environment variable
+            if gpu_info.get('selected_provider') and not gpu_info.get('env_provider'):
+                os.environ['ONNX_PROVIDER'] = gpu_info['selected_provider']
+
+            print_gpu_info(gpu_info, auto_enabled, requested_gpu=use_gpu)
+            print()  # Blank line for readability
+
+            # Exit with error if --gpu was requested but no provider is available
+            if use_gpu and not gpu_info.get('selected_provider'):
+                print("\nError: Cannot enable GPU acceleration. No compatible GPU provider found.")
+                sys.exit(1)
 
             # Load model
             print("Loading Kokoro model...")
@@ -2219,7 +2313,7 @@ def main():
                          speed=speed, lang=lang, split_output=split_output,
                          chapters_output=chapters_output,
                          format=format, debug=debug, stdin_indicators=stdin_indicators,
-                         model_path=model_path, voices_path=voices_path)
+                         model_path=model_path, voices_path=voices_path, use_gpu=use_gpu)
 
 
 if __name__ == '__main__':
