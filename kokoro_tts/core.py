@@ -80,6 +80,7 @@ class AudiobookOptions:
     skip_front_matter: bool = True
     intro_text: Optional[str] = None
     no_intro: bool = False
+    chapter_pause_seconds: float = 0.0
 
 
 class KokoroEngine:

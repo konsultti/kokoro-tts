@@ -199,12 +199,17 @@ def extract_pdf_metadata(pdf_path: str) -> Dict[str, any]:
     return metadata
 
 
-def calculate_chapter_timings(chapter_files: List[str], chapter_titles: List[str]) -> List[Dict]:
+def calculate_chapter_timings(
+    chapter_files: List[str],
+    chapter_titles: List[str],
+    pause_seconds: float = 0.0
+) -> List[Dict]:
     """Calculate start/end times for each chapter.
 
     Args:
         chapter_files: List of M4A chapter file paths in order
         chapter_titles: List of chapter titles corresponding to files
+        pause_seconds: Seconds of pause between chapters (default: 0.0)
 
     Returns:
         List of {'title': str, 'start_time': float, 'end_time': float}
@@ -227,6 +232,11 @@ def calculate_chapter_timings(chapter_files: List[str], chapter_titles: List[str
             })
 
             current_time += duration
+
+            # Add pause after each chapter except the last one
+            if i < len(chapter_files) - 1:
+                current_time += pause_seconds
+
         except Exception as e:
             print(f"Warning: Could not calculate timing for {chapter_file}: {e}")
             continue
