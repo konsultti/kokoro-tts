@@ -4,15 +4,17 @@ A text-to-speech tool using the Kokoro model, supporting multiple languages, voi
 
 **This is a fork from https://github.com/nazdridoy/kokoro-tts**
 
-*Major upgrades from original:*
+**Major upgrades from original:**
 - Fixed critical memory leak
 - Improved performance
-- Added AAC M4A outout
+- Added AAC M4A output
 - Updated dependencies
 - Web-UI added
 - New CLI features, like --audiobook
 - Include metadata to audiobook file
 - Improved GPU support (Nvidia, AMD)
+- Autoskip extra content when creating audiobook
+- Light testing framework added
 
 All new features are coded by Claude Code.
 
@@ -37,8 +39,11 @@ All new features are coded by Claude Code.
 - [x] Add GPU support
 - [x] Add PDF support
 - [x] Add Web UI
-- [] Improve Web UI (chapter selection etc)
-- [] Add native GUI
+- [ ] Improve Web UI (chapter selection etc)
+- [ ] Add native GUI
+- [ ] Improve test framework
+- [ ] Comprehensive testing
+
 
 ## Prerequisites
 

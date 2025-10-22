@@ -10,10 +10,10 @@ Kokoro TTS is a text-to-speech tool using the Kokoro ONNX model. It provides bot
 - **Dual interface**: CLI (`kokoro-tts`) and Web UI (`kokoro-tts-ui`)
 - **Refactored architecture**: Core logic in `kokoro_tts/core.py`, CLI in `kokoro_tts/__init__.py`, UI in `kokoro_tts/ui/`
 - Python 3.10-3.13 support
-- Published to PyPI as `kokoro-tts`
 - Uses `uv` as the preferred package manager
 - Depends on external model files (`kokoro-v1.0.onnx` and `voices-v1.0.bin`)
 - Uses kokoro-onnx 0.4.9 with hardcoded language support
+- Fork of original kokoro-tts with additional audiobook features
 
 ## Development Commands
 
@@ -58,7 +58,7 @@ python -m kokoro_tts.ui.gradio_app
 
 ### Testing
 
-There are no automated tests. Manual testing is required:
+The project has minimal automated tests for audiobook features. Run tests with:
 
 ```bash
 # Test basic text-to-speech
@@ -81,17 +81,24 @@ uv run kokoro-tts input.txt output.wav --gpu --voice af_sarah
 
 # Test Web UI with GPU
 uv run kokoro-tts-ui --gpu
+
+# Test audiobook front matter detection
+python test_front_matter.py
+
+# Test audiobook intro generation
+python test_intro_generation.py
 ```
 
-### Building and Publishing
+**Manual testing** is still required for most features:
+
+### Building
 
 ```bash
-# Build package
+# Build package (if needed for local distribution)
 python -m build
-
-# Publish to PyPI (handled by GitHub Actions on release)
-# See .github/workflows/python-publish.yml
 ```
+
+Note: This is a fork, not published to PyPI.
 
 ## Architecture
 
@@ -246,7 +253,6 @@ Voices can be blended by:
 - `kokoro-onnx==0.4.9`: Core TTS model (pinned version)
 - `pymupdf` + `pymupdf4llm`: PDF processing
 - `sounddevice` + `soundfile`: Audio I/O
-- Development: `build`, `twine` for PyPI publishing
 
 **Important Notes:**
 - Language support is hardcoded in `SUPPORTED_LANGUAGES` constant (lines 29-41)
@@ -342,19 +348,20 @@ engine.process_file("input.epub", "output.mp3", options)
 - Test with long texts to trigger phoneme errors
 - Ensure sample rate consistency across chunks
 
-## Release Process
+## Development Process
 
-1. Update version in `pyproject.toml`
-2. Update README.md if needed
-3. Commit with message following COMMIT_GUIDELINES.md
-4. Create GitHub release
-5. GitHub Actions automatically builds and publishes to PyPI
+1. Make changes on feature branches
+2. Test manually with relevant test cases
+3. Update README.md or CLAUDE.md if needed for significant changes
+4. Commit with descriptive messages
+5. Merge to `development` branch for testing
+6. Merge to `main` when stable
 
 ## Known Constraints
 
 - Python 3.9 not supported (requires 3.10+)
 - Model has phoneme length limit (~510 tokens)
 - Model files must be in working directory or specified via `--model` and `--voices`
-- No automated test suite (manual testing only)
+- Limited automated tests (only for audiobook features)
 - Single-threaded audio generation (no parallel chunk processing)
 - Language list is hardcoded and not dynamically retrieved from kokoro-onnx
