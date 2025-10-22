@@ -261,6 +261,400 @@ class KokoroUI:
 
         return self.generate_simple(preview_text, blended_voice, speed, language, progress)
 
+    def preview_audiobook_chapters(
+        self,
+        file,
+        progress=gr.Progress()
+    ) -> Tuple[dict, str, str]:
+        """Preview chapters from uploaded book.
+
+        Args:
+            file: Uploaded EPUB or PDF file
+            progress: Gradio progress tracker
+
+        Returns:
+            Tuple of (chapters dict, title, author)
+        """
+        if file is None:
+            return {}, "", ""
+
+        try:
+            progress(0, desc="Loading book...")
+
+            # Import required modules
+            from kokoro_tts.audiobook import extract_epub_metadata, extract_pdf_metadata
+            from kokoro_tts import extract_chapters_from_epub, PdfParser
+
+            input_path = file.name
+
+            # Extract metadata and chapters based on file type
+            if input_path.endswith('.epub'):
+                progress(0.3, desc="Extracting EPUB metadata...")
+                metadata = extract_epub_metadata(input_path)
+
+                progress(0.6, desc="Extracting chapters...")
+                chapters_data = extract_chapters_from_epub(
+                    input_path,
+                    debug=False,
+                    skip_confirmation=True,
+                    skip_front_matter=False  # Show all chapters for preview
+                )
+            elif input_path.endswith('.pdf'):
+                progress(0.3, desc="Extracting PDF metadata...")
+                metadata = extract_pdf_metadata(input_path)
+
+                progress(0.6, desc="Extracting chapters...")
+                parser = PdfParser(input_path, debug=False, skip_confirmation=True)
+                chapters_data = parser.get_chapters()
+            else:
+                return {"error": "Unsupported file type"}, "", ""
+
+            # Format chapters for display
+            progress(0.9, desc="Formatting chapters...")
+            chapters_dict = {
+                f"Chapter {i+1}": ch['title'][:80]  # Truncate long titles
+                for i, ch in enumerate(chapters_data)
+            }
+
+            progress(1.0, desc="Complete!")
+
+            return (
+                chapters_dict,
+                metadata.get('title', ''),
+                metadata.get('author', '')
+            )
+
+        except Exception as e:
+            return {"error": str(e)}, "", ""
+
+    def generate_audiobook(
+        self,
+        file,
+        voice: str,
+        speed: float,
+        language: str,
+        chapter_pause: float,
+        title: str,
+        author: str,
+        narrator: str,
+        year: str,
+        genre: str,
+        description: str,
+        cover_file,
+        select_chapters: str,
+        skip_front_matter: bool,
+        add_intro: bool,
+        intro_text: str,
+        keep_temp: bool,
+        no_chapters: bool,
+        progress=gr.Progress()
+    ) -> Tuple[Optional[str], str, str]:
+        """Generate audiobook from uploaded file.
+
+        Args:
+            file: Uploaded EPUB or PDF
+            voice: Voice selection
+            speed: Speech speed
+            language: Language code
+            chapter_pause: Seconds of pause between chapters
+            title: Book title override
+            author: Author override
+            narrator: Narrator name
+            year: Publication year
+            genre: Book genre
+            description: Book description
+            cover_file: Custom cover image
+            select_chapters: Chapter selection string
+            skip_front_matter: Skip front matter chapters
+            add_intro: Add introduction chapter
+            intro_text: Custom intro text
+            keep_temp: Keep temporary files
+            no_chapters: Skip chapter markers
+            progress: Gradio progress tracker
+
+        Returns:
+            Tuple of (output file path, info text, progress log)
+        """
+        if file is None:
+            return None, "", "⚠ Please upload a file"
+
+        if not voice:
+            return None, "", "⚠ Please select a voice"
+
+        temp_merged = None
+        temp_dir_created = None
+
+        try:
+            # Initialize engine if needed
+            if self.engine is None:
+                status = self.initialize_engine()
+                if "Error" in status:
+                    return None, "", status
+
+            progress(0.05, desc="[1/7] Initializing...")
+
+            # Import required modules
+            from kokoro_tts.audiobook import AudiobookCreator, calculate_chapter_timings, embed_audiobook_metadata
+            from kokoro_tts.core import AudiobookOptions, Chapter
+            from kokoro_tts import extract_chapters_from_epub, PdfParser, generate_audiobook_intro
+            import shutil
+
+            input_path = file.name
+
+            # Create output file
+            output_file = tempfile.NamedTemporaryFile(delete=False, suffix='.m4a')
+            output_path = output_file.name
+            output_file.close()
+
+            # Create audiobook options
+            audiobook_opts = AudiobookOptions(
+                select_chapters=select_chapters or "all",
+                keep_temp=keep_temp,
+                no_metadata=False,  # Always embed metadata in UI
+                no_chapters=no_chapters,
+                skip_front_matter=skip_front_matter,
+                intro_text=intro_text if intro_text else None,
+                no_intro=not add_intro,
+                cover_path=cover_file.name if cover_file else None,
+                title=title if title else None,
+                author=author if author else None,
+                narrator=narrator if narrator else None,
+                year=year if year else None,
+                genre=genre if genre else None,
+                description=description if description else None,
+                chapter_pause_seconds=chapter_pause
+            )
+
+            # Progress tracking
+            progress_log = []
+
+            def log_progress(msg: str):
+                progress_log.append(msg)
+
+            # Use AudiobookCreator context manager
+            with AudiobookCreator(input_path, audiobook_opts) as creator:
+                temp_dir_created = creator.temp_dir
+
+                # Step 1: Extract metadata
+                progress(0.1, desc="[1/7] Extracting metadata...")
+                log_progress("[1/7] Extracting metadata and cover...")
+                metadata = creator.extract_metadata()
+
+                # Step 2: Extract and select chapters
+                progress(0.15, desc="[2/7] Extracting chapters...")
+                log_progress("[2/7] Extracting chapters from book...")
+
+                if input_path.endswith('.epub'):
+                    all_chapters = extract_chapters_from_epub(
+                        input_path,
+                        debug=False,
+                        skip_confirmation=True,
+                        skip_front_matter=audiobook_opts.skip_front_matter
+                    )
+                else:  # PDF
+                    parser = PdfParser(input_path, debug=False, skip_confirmation=True)
+                    all_chapters = parser.get_chapters()
+
+                if not all_chapters:
+                    return None, "", "✗ Error: No chapters found in file"
+
+                # Convert to Chapter objects
+                chapter_objects = [
+                    Chapter(title=ch['title'], content=ch['content'], order=ch['order'])
+                    for ch in all_chapters
+                ]
+
+                selected_chapters = creator.select_chapters_from_list(chapter_objects)
+                log_progress(f"  Selected {len(selected_chapters)} chapters")
+
+                # Add introduction if requested
+                if not audiobook_opts.no_intro:
+                    if audiobook_opts.intro_text:
+                        intro_content = audiobook_opts.intro_text
+                    else:
+                        intro_content = generate_audiobook_intro(metadata)
+
+                    if intro_content:
+                        intro_chapter = Chapter(title="Introduction", content=intro_content, order=0)
+                        selected_chapters = [intro_chapter] + selected_chapters
+                        log_progress("  Added introduction chapter")
+
+                # Step 3: Generate audio for each chapter
+                progress(0.20, desc="[3/7] Generating audio...")
+                log_progress(f"[3/7] Generating audio for {len(selected_chapters)} chapters...")
+
+                chapter_files = []
+                chapter_titles = []
+
+                for idx, chapter in enumerate(selected_chapters, 1):
+                    chapter_progress = 0.20 + (0.50 * idx / len(selected_chapters))
+                    progress(chapter_progress, desc=f"[3/7] Processing chapter {idx}/{len(selected_chapters)}: {chapter.title[:30]}...")
+                    log_progress(f"  [{idx}/{len(selected_chapters)}] {chapter.title}")
+
+                    # Generate audio for this chapter
+                    chapter_file = os.path.join(temp_dir_created, f"chapter_{idx:03d}.m4a")
+
+                    options = ProcessingOptions(
+                        voice=voice,
+                        speed=speed,
+                        lang=language,
+                        format=AudioFormat.M4A
+                    )
+
+                    samples, sr = self.engine.generate_audio(chapter.content, options)
+
+                    if samples is not None:
+                        self.engine.save_audio(samples, sr, chapter_file, AudioFormat.M4A)
+                        chapter_files.append(chapter_file)
+                        chapter_titles.append(chapter.title)
+                    else:
+                        log_progress(f"    Warning: No audio generated for chapter {idx}")
+
+                if not chapter_files:
+                    return None, "", "✗ Error: No audio generated"
+
+                # Step 4: Merge chapters
+                progress(0.72, desc="[4/7] Merging chapters...")
+                log_progress(f"[4/7] Merging {len(chapter_files)} chapters...")
+
+                temp_merged = os.path.join(temp_dir_created, "_temp_merged.m4a")
+
+                import subprocess
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                    filelist_path = f.name
+
+                    # Generate silence file if chapter pause requested
+                    silence_file = None
+                    if chapter_pause > 0:
+                        log_progress(f"  Adding {chapter_pause}s pause between chapters...")
+                        silence_file = os.path.join(temp_dir_created, "_silence.m4a")
+                        silence_cmd = [
+                            'ffmpeg', '-y', '-f', 'lavfi',
+                            '-i', f'anullsrc=r=44100:cl=mono',
+                            '-t', str(chapter_pause),
+                            '-c:a', 'aac', '-b:a', '128k',
+                            silence_file
+                        ]
+                        subprocess.run(silence_cmd, capture_output=True, text=True)
+
+                    # Create concat list
+                    for i, chapter_file in enumerate(chapter_files):
+                        if os.path.exists(chapter_file):
+                            abs_path = os.path.abspath(chapter_file)
+                            escaped_path = abs_path.replace("'", "'\\''")
+                            f.write(f"file '{escaped_path}'\n")
+
+                            # Insert silence between chapters (but not after the last one)
+                            if silence_file and i < len(chapter_files) - 1:
+                                abs_silence = os.path.abspath(silence_file)
+                                escaped_silence = abs_silence.replace("'", "'\\''")
+                                f.write(f"file '{escaped_silence}'\n")
+
+                try:
+                    ffmpeg_cmd = [
+                        'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                        '-i', filelist_path,
+                        '-c:a', 'aac', '-b:a', '128k',
+                        temp_merged
+                    ]
+
+                    result = subprocess.run(
+                        ffmpeg_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+
+                    if result.returncode != 0:
+                        raise Exception(f"FFmpeg failed: {result.stderr}")
+
+                    log_progress("  ✓ Chapters merged")
+                finally:
+                    if os.path.exists(filelist_path):
+                        os.unlink(filelist_path)
+
+                # Step 5: Embed metadata
+                if not no_chapters:
+                    progress(0.85, desc="[5/7] Embedding metadata...")
+                    log_progress("[5/7] Embedding metadata and chapter markers...")
+
+                    # Calculate chapter timings
+                    chapters_info = calculate_chapter_timings(
+                        chapter_files,
+                        chapter_titles,
+                        chapter_pause
+                    )
+
+                    # Add narrator if not specified
+                    if not metadata.get('narrator') and voice:
+                        metadata['narrator'] = voice
+
+                    # Embed metadata
+                    try:
+                        embed_audiobook_metadata(
+                            temp_merged,
+                            output_path,
+                            metadata,
+                            metadata.get('cover'),
+                            chapters_info
+                        )
+                        log_progress("  ✓ Metadata embedded")
+                        log_progress(f"  ✓ {len(chapters_info)} chapter markers added")
+                    except Exception as e:
+                        log_progress(f"  Warning: Could not embed metadata: {e}")
+                        log_progress("  Copying file without metadata...")
+                        shutil.copy(temp_merged, output_path)
+                else:
+                    progress(0.85, desc="[5/7] Skipping metadata...")
+                    log_progress("[5/7] Skipping metadata embedding...")
+                    shutil.copy(temp_merged, output_path)
+
+            # Step 6: Calculate file info
+            progress(0.95, desc="[6/7] Finalizing...")
+            log_progress("[6/7] Calculating audiobook information...")
+
+            from pydub import AudioSegment
+            file_size = os.path.getsize(output_path) / (1024 * 1024)
+            audio = AudioSegment.from_file(output_path, format='mp4')
+            duration_sec = len(audio) / 1000.0
+            hours = int(duration_sec // 3600)
+            minutes = int((duration_sec % 3600) // 60)
+            seconds = int(duration_sec % 60)
+
+            info_text = f"""✓ Audiobook created successfully!
+
+Duration: {hours}h {minutes}m {seconds}s
+Size: {file_size:.1f} MB
+Format: M4A with AAC codec
+Chapters: {len(chapter_files)} included
+Voice: {voice}
+Speed: {speed}x
+"""
+
+            # Step 7: Complete
+            progress(1.0, desc="[7/7] Complete!")
+            log_progress("[7/7] ✓ Audiobook creation complete!")
+            log_progress(f"\nDuration: {hours}h {minutes}m {seconds}s")
+            log_progress(f"Size: {file_size:.1f} MB")
+
+            return output_path, info_text, "\n".join(progress_log)
+
+        except Exception as e:
+            error_msg = f"✗ Error: {str(e)}"
+            progress_log.append(error_msg)
+            return None, "", "\n".join(progress_log)
+
+        finally:
+            # Clean up temporary files
+            if temp_merged and os.path.exists(temp_merged):
+                try:
+                    os.unlink(temp_merged)
+                except:
+                    pass
+
+            # AudiobookCreator context manager will handle its own cleanup
+            # unless keep_temp is True
+
 
 def create_ui(
     model_path: str = "kokoro-v1.0.onnx",
@@ -493,6 +887,168 @@ def create_ui(
                             outputs=[blend_audio, blend_status]
                         )
 
+            # ===== TAB 4: Audiobook Creator =====
+            with gr.Tab("Audiobook Creator"):
+                gr.Markdown("""
+                ### Create Professional Audiobooks
+                Convert EPUB or PDF books into M4A audiobooks with metadata and chapter markers.
+                Uses disk-based processing to handle large files efficiently.
+                """)
+
+                # File upload
+                with gr.Row():
+                    audiobook_file = gr.File(
+                        label="📚 Upload Book (EPUB/PDF)",
+                        file_types=[".epub", ".pdf"]
+                    )
+
+                # Basic settings
+                with gr.Accordion("⚙️ Basic Settings", open=True):
+                    with gr.Row():
+                        ab_voice = gr.Dropdown(
+                            label="Voice",
+                            choices=[],
+                            value=None,
+                            interactive=True
+                        )
+                        ab_speed = gr.Slider(
+                            minimum=0.5,
+                            maximum=2.0,
+                            value=1.0,
+                            step=0.1,
+                            label="Speed"
+                        )
+                        ab_lang = gr.Dropdown(
+                            label="Language",
+                            choices=SUPPORTED_LANGUAGES,
+                            value="en-us"
+                        )
+                    ab_chapter_pause = gr.Slider(
+                        minimum=0,
+                        maximum=5,
+                        value=2.0,
+                        step=0.5,
+                        label="Pause between chapters (seconds)"
+                    )
+
+                # Metadata (auto-filled but editable)
+                with gr.Accordion("📝 Metadata (auto-detected from file)", open=False):
+                    ab_title = gr.Textbox(
+                        label="Title",
+                        placeholder="Auto-detected from file"
+                    )
+                    ab_author = gr.Textbox(
+                        label="Author",
+                        placeholder="Auto-detected from file"
+                    )
+                    ab_narrator = gr.Textbox(
+                        label="Narrator",
+                        placeholder="Defaults to voice name"
+                    )
+                    with gr.Row():
+                        ab_year = gr.Textbox(
+                            label="Year",
+                            placeholder="e.g., 2024"
+                        )
+                        ab_genre = gr.Textbox(
+                            label="Genre",
+                            placeholder="e.g., Fiction"
+                        )
+                    ab_description = gr.Textbox(
+                        label="Description",
+                        lines=3,
+                        placeholder="Auto-detected or leave empty"
+                    )
+                    ab_cover = gr.File(
+                        label="Cover Image (optional override)",
+                        file_types=[".jpg", ".jpeg", ".png"]
+                    )
+
+                # Chapter selection
+                with gr.Accordion("📖 Chapter Selection", open=False):
+                    ab_preview_btn = gr.Button("Preview Chapters from File", variant="secondary")
+                    ab_chapters_display = gr.JSON(
+                        label="Available Chapters",
+                        visible=False
+                    )
+                    ab_select_chapters = gr.Textbox(
+                        label="Select Chapters",
+                        value="all",
+                        placeholder="Examples: all, 1-5, 1,3,5,7-10"
+                    )
+
+                # Advanced options
+                with gr.Accordion("🔧 Advanced Options", open=False):
+                    ab_skip_front = gr.Checkbox(
+                        label="Skip front matter (copyright, TOC, etc.)",
+                        value=True
+                    )
+                    ab_add_intro = gr.Checkbox(
+                        label="Add introduction chapter",
+                        value=True
+                    )
+                    ab_intro_text = gr.Textbox(
+                        label="Custom intro text (optional)",
+                        lines=2,
+                        placeholder="Leave empty for auto-generated intro"
+                    )
+                    with gr.Row():
+                        ab_keep_temp = gr.Checkbox(
+                            label="Keep temporary files",
+                            value=False
+                        )
+                        ab_no_chapters = gr.Checkbox(
+                            label="Skip chapter markers",
+                            value=False
+                        )
+
+                # Generate button
+                ab_generate_btn = gr.Button(
+                    "🎧 Create Audiobook",
+                    variant="primary",
+                    size="lg"
+                )
+
+                # Output
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        ab_progress = gr.Textbox(
+                            label="Progress Log",
+                            lines=10,
+                            interactive=False,
+                            max_lines=20
+                        )
+                    with gr.Column(scale=1):
+                        ab_info = gr.Textbox(
+                            label="Audiobook Info",
+                            lines=10,
+                            interactive=False
+                        )
+
+                ab_output = gr.File(label="📥 Download Audiobook (M4A)")
+
+                # Wire up events
+                ab_preview_btn.click(
+                    fn=ui.preview_audiobook_chapters,
+                    inputs=[audiobook_file],
+                    outputs=[ab_chapters_display, ab_title, ab_author]
+                ).then(
+                    lambda: gr.update(visible=True),
+                    outputs=[ab_chapters_display]
+                )
+
+                ab_generate_btn.click(
+                    fn=ui.generate_audiobook,
+                    inputs=[
+                        audiobook_file, ab_voice, ab_speed, ab_lang,
+                        ab_chapter_pause, ab_title, ab_author, ab_narrator,
+                        ab_year, ab_genre, ab_description, ab_cover,
+                        ab_select_chapters, ab_skip_front, ab_add_intro,
+                        ab_intro_text, ab_keep_temp, ab_no_chapters
+                    ],
+                    outputs=[ab_output, ab_info, ab_progress]
+                )
+
         # Load voices on startup
         def load_voices():
             status = ui.initialize_engine()
@@ -506,6 +1062,7 @@ def create_ui(
                 gr.update(choices=voices, value=default_voice),  # preview_voice
                 gr.update(choices=voices, value=default_voice),  # blend_voice1
                 gr.update(choices=voices, value=default_voice if len(voices) < 2 else voices[1]),  # blend_voice2
+                gr.update(choices=voices, value=default_voice),  # ab_voice
             )
 
         demo.load(
@@ -516,7 +1073,8 @@ def create_ui(
                 file_voice,
                 preview_voice,
                 blend_voice1,
-                blend_voice2
+                blend_voice2,
+                ab_voice
             ]
         )
 
