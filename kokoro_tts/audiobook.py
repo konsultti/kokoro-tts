@@ -331,6 +331,7 @@ def embed_audiobook_metadata(
         ])
 
     ffmpeg_cmd.extend([
+        '-threads', '0',  # Use all available CPU threads
         '-c:a', 'copy',  # Copy audio stream (no re-encode)
         output_m4a
     ])

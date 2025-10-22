@@ -566,6 +566,7 @@ class KokoroUI:
                     ffmpeg_cmd = [
                         'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
                         '-i', filelist_path,
+                        '-threads', '0',
                         '-c:a', 'aac', '-b:a', '128k',
                         temp_merged
                     ]

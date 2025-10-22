@@ -1460,6 +1460,7 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                                 ffmpeg_cmd = [
                                     'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
                                     '-i', filelist_path,
+                                    '-threads', '0',
                                     '-c:a', 'aac', '-b:a', '128k',
                                     audiobook_file
                                 ]
@@ -1468,6 +1469,7 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                                 ffmpeg_cmd = [
                                     'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
                                     '-i', filelist_path,
+                                    '-threads', '0',
                                     '-c', 'copy',
                                     audiobook_file
                                 ]
