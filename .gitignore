@@ -15,6 +15,7 @@ book_audio/
 chunks/
 chapters/
 audiobook/
+audiobook_*/
 
 *.npz
 *.bin
