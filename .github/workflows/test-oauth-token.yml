@@ -1,0 +1,35 @@
+name: Test OAuth Token
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-oauth:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Test Claude Code OAuth Token
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            This is a test to verify that the CLAUDE_CODE_OAUTH_TOKEN is working correctly.
+
+            Please:
+            1. Check that you can access the repository information
+            2. List the workflow files in .github/workflows/
+            3. Create a test issue with title "OAuth Token Test - $(date)" and body "The CLAUDE_CODE_OAUTH_TOKEN is working correctly!"
+
+            Use `gh issue create` to create the test issue.
+
+          claude_args: '--allowed-tools "Bash(gh issue create:*),Bash(gh issue list:*),Bash(ls:*)"'
