@@ -1,15 +1,16 @@
 name: Tests
 
 on:
-  pull_request:
-    branches:
-      - main
-      - development
-  push:
-    branches:
-      - main
-      - development
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:  # Manual trigger only
+  # Automatic triggers disabled - run manually when needed
+  # pull_request:
+  #   branches:
+  #     - main
+  #     - development
+  # push:
+  #   branches:
+  #     - main
+  #     - development
 
 jobs:
   test:

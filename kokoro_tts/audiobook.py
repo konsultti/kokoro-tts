@@ -163,19 +163,55 @@ def extract_epub_metadata(epub_path: str) -> Dict[str, any]:
                 elif item_name.endswith('.html') or item_name.endswith('.xhtml'):
                     try:
                         html_content = cover_data.decode('utf-8')
-                        # Look for image references in href or src attributes
-                        import re
-                        img_patterns = [
-                            r'xlink:href="([^"]+)"',
-                            r'src="([^"]+)"',
-                            r'<img[^>]+src="([^"]+)"'
-                        ]
-                        for pattern in img_patterns:
-                            match = re.search(pattern, html_content)
-                            if match:
-                                cover_image_path = match.group(1)
+
+                        # Security: Limit HTML content size to prevent ReDoS attacks
+                        # Only search first 100KB of HTML (covers are typically in the beginning)
+                        MAX_SEARCH_SIZE = 100 * 1024  # 100KB
+                        html_search = html_content[:MAX_SEARCH_SIZE]
+
+                        # Use BeautifulSoup for safer HTML parsing (already a dependency)
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(html_search, 'html.parser')
+
+                        # Strategy: Look for image references in specific attributes
+                        # This is safer than regex and handles malformed HTML better
+                        found = False
+
+                        # Check xlink:href in SVG/image elements
+                        for elem in soup.find_all(['image', 'img']):
+                            # Check xlink:href attribute
+                            href = elem.get('xlink:href') or elem.get('{http://www.w3.org/1999/xlink}href')
+                            if href and not href.startswith('data:'):
+                                cover_image_path = href
+                                found = True
                                 break
+
+                            # Check src attribute
+                            src = elem.get('src')
+                            if src and not src.startswith('data:'):
+                                cover_image_path = src
+                                found = True
+                                break
+
+                        # Fallback: Use bounded regex patterns as last resort
+                        # These patterns are safer with limited input size
+                        if not found:
+                            import re
+                            # More specific, bounded patterns
+                            img_patterns = [
+                                r'xlink:href="([^"]{1,500})"',  # Max 500 chars
+                                r'src="([^"]{1,500})"',          # Max 500 chars
+                            ]
+                            for pattern in img_patterns:
+                                match = re.search(pattern, html_search)
+                                if match:
+                                    path = match.group(1)
+                                    # Validate it's not a data URI
+                                    if not path.startswith('data:'):
+                                        cover_image_path = path
+                                        break
                     except Exception:
+                        # Fail gracefully on any parsing errors
                         pass
 
     # Strategy 2: If cover.html referenced an image, find that image
