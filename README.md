@@ -18,6 +18,42 @@ A text-to-speech tool using the Kokoro model, supporting multiple languages, voi
 
 All new features are coded by Claude Code.
 
+## Table of Contents
+
+- [Features](#features)
+- [TODO](#todo)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+  - [Method 1: Install from Git (Recommended)](#method-1-install-from-git-recommended)
+  - [Method 2: Clone and Install Locally](#method-2-clone-and-install-locally)
+  - [Method 3: Run Without Installation](#method-3-run-without-installation)
+  - [Download Model Files](#download-model-files)
+  - [GPU Acceleration (Optional)](#gpu-acceleration-optional)
+- [Supported voices](#supported-voices)
+- [Usage](#usage)
+  - [Web UI (Recommended for Beginners)](#web-ui-recommended-for-beginners)
+  - [CLI Usage (For Advanced Users)](#cli-usage-for-advanced-users)
+  - [Commands](#commands)
+  - [Options](#options)
+  - [Input Formats](#input-formats)
+  - [Examples](#examples)
+    - [Basic Text-to-Speech](#basic-text-to-speech)
+    - [Standard Input (stdin)](#standard-input-stdin)
+    - [Voice Blending](#voice-blending)
+    - [EPUB Book Processing](#epub-book-processing)
+    - [PDF Document Processing](#pdf-document-processing)
+    - [Audiobook Creation (M4A with Metadata)](#audiobook-creation-m4a-with-metadata)
+    - [Custom Model Paths](#custom-model-paths)
+    - [Utility Commands](#utility-commands)
+- [Features in Detail](#features-in-detail)
+  - [EPUB Processing](#epub-processing)
+  - [Audio Processing](#audio-processing)
+  - [Output Options](#output-options)
+  - [Debug Mode](#debug-mode)
+  - [Input Options](#input-options)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
 ## Features
 
@@ -39,7 +75,7 @@ All new features are coded by Claude Code.
 - [x] Add GPU support
 - [x] Add PDF support
 - [x] Add Web UI
-- [ ] Improve Web UI (chapter selection etc)
+- [x] Improve Web UI (chapter selection etc)
 - [ ] Add native GUI
 - [ ] Improve test framework
 - [ ] Comprehensive testing

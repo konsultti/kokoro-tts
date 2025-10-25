@@ -1,0 +1,77 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - development
+  push:
+    branches:
+      - main
+      - development
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false  # Continue testing other versions even if one fails
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'  # Cache pip dependencies for faster runs
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock
+          pip install -e .
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+      - name: Run tests with coverage (Ubuntu only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          pytest tests/ --cov=kokoro_tts --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage to Codecov (Ubuntu Python 3.12 only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false  # Don't fail if codecov upload fails
+        continue-on-error: true  # Continue even if upload fails
+
+  test-summary:
+    name: Test Summary
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.test.result }}" == "failure" ]; then
+            echo "❌ Tests failed!"
+            exit 1
+          elif [ "${{ needs.test.result }}" == "success" ]; then
+            echo "✅ All tests passed!"
+          else
+            echo "⚠️ Tests were cancelled or skipped"
+            exit 1
+          fi

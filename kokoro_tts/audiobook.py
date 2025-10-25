@@ -139,14 +139,17 @@ def extract_epub_metadata(epub_path: str) -> Dict[str, any]:
         elif 'rights' in key.lower():
             metadata['rights'] = text_value
 
-    # Extract cover image
+    # Extract cover image (multiple fallback strategies)
+    cover_image_path = None
+
+    # Strategy 1: Check for ITEM_COVER type or 'cover' in filename
     for item in book.get_items():
         item_type = item.get_type()
         item_name = item.get_name().lower()
 
         if item_type == ITEM_COVER or 'cover' in item_name:
             cover_data = item.get_content()
-            # Validate that it's a real image format (PNG/JPEG), not SVG/XML
+            # Validate that it's a real image format (PNG/JPEG/WEBP), not SVG/XML
             if cover_data and len(cover_data) > 8:
                 # Check magic bytes for common image formats
                 is_png = cover_data[:8] == b'\x89PNG\r\n\x1a\n'
@@ -156,6 +159,64 @@ def extract_epub_metadata(epub_path: str) -> Dict[str, any]:
                 if is_png or is_jpeg or is_webp:
                     metadata['cover'] = cover_data
                     break
+                # If it's an HTML file, parse it to find image reference
+                elif item_name.endswith('.html') or item_name.endswith('.xhtml'):
+                    try:
+                        html_content = cover_data.decode('utf-8')
+                        # Look for image references in href or src attributes
+                        import re
+                        img_patterns = [
+                            r'xlink:href="([^"]+)"',
+                            r'src="([^"]+)"',
+                            r'<img[^>]+src="([^"]+)"'
+                        ]
+                        for pattern in img_patterns:
+                            match = re.search(pattern, html_content)
+                            if match:
+                                cover_image_path = match.group(1)
+                                break
+                    except Exception:
+                        pass
+
+    # Strategy 2: If cover.html referenced an image, find that image
+    if not metadata['cover'] and cover_image_path:
+        for item in book.get_items():
+            if item.get_name() == cover_image_path or item.get_name().endswith(cover_image_path):
+                cover_data = item.get_content()
+                if cover_data and len(cover_data) > 8:
+                    is_png = cover_data[:8] == b'\x89PNG\r\n\x1a\n'
+                    is_jpeg = cover_data[:3] == b'\xff\xd8\xff'
+                    is_webp = cover_data[:4] == b'RIFF' and cover_data[8:12] == b'WEBP'
+
+                    if is_png or is_jpeg or is_webp:
+                        metadata['cover'] = cover_data
+                        break
+
+    # Strategy 3: Check EPUB metadata for cover reference
+    if not metadata['cover']:
+        try:
+            # Look for cover metadata
+            for meta_key, meta_values in book.metadata.items():
+                if 'cover' in meta_key.lower():
+                    # Extract cover ID from metadata
+                    cover_id = meta_values[0][0] if meta_values else None
+                    if cover_id:
+                        # Find item by ID
+                        for item in book.get_items():
+                            if item.get_id() == cover_id or cover_id in item.get_name():
+                                cover_data = item.get_content()
+                                if cover_data and len(cover_data) > 8:
+                                    is_png = cover_data[:8] == b'\x89PNG\r\n\x1a\n'
+                                    is_jpeg = cover_data[:3] == b'\xff\xd8\xff'
+                                    is_webp = cover_data[:4] == b'RIFF' and cover_data[8:12] == b'WEBP'
+
+                                    if is_png or is_jpeg or is_webp:
+                                        metadata['cover'] = cover_data
+                                        break
+                        if metadata['cover']:
+                            break
+        except Exception:
+            pass
 
     return metadata
 
