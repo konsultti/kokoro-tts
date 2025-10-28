@@ -82,6 +82,153 @@ class AudiobookOptions:
     no_intro: bool = False
 
 
+def validate_language(lang: str, kokoro=None) -> str:
+    """Validate if the language is supported.
+
+    Note: kokoro parameter is kept for backward compatibility but not used.
+    Languages are now hardcoded as kokoro-onnx 0.4.9+ doesn't expose get_languages().
+
+    Args:
+        lang: Language code to validate
+        kokoro: Optional kokoro instance (kept for backward compatibility, not used)
+
+    Returns:
+        Validated language code
+
+    Raises:
+        ValueError: If language is not supported
+    """
+    if lang not in SUPPORTED_LANGUAGES:
+        supported_langs = ', '.join(sorted(SUPPORTED_LANGUAGES))
+        raise ValueError(f"Unsupported language: {lang}\nSupported languages are: {supported_langs}")
+    return lang
+
+
+def chunk_text(text: str, initial_chunk_size: int = 1000) -> List[str]:
+    """Split text into chunks at sentence boundaries with dynamic sizing.
+
+    Args:
+        text: Text to split into chunks
+        initial_chunk_size: Target chunk size in characters (default: 1000)
+
+    Returns:
+        List of text chunks
+    """
+    sentences = text.replace('\n', ' ').split('.')
+    chunks = []
+    current_chunk = []
+    current_size = 0
+    chunk_size = initial_chunk_size
+
+    for sentence in sentences:
+        if not sentence.strip():
+            continue  # Skip empty sentences
+
+        sentence = sentence.strip() + '.'
+        sentence_size = len(sentence)
+
+        # If a single sentence is too long, split it into smaller pieces
+        if sentence_size > chunk_size:
+            words = sentence.split()
+            current_piece = []
+            current_piece_size = 0
+
+            for word in words:
+                word_size = len(word) + 1  # +1 for space
+                if current_piece_size + word_size > chunk_size:
+                    if current_piece:
+                        chunks.append(' '.join(current_piece).strip() + '.')
+                    current_piece = [word]
+                    current_piece_size = word_size
+                else:
+                    current_piece.append(word)
+                    current_piece_size += word_size
+
+            if current_piece:
+                chunks.append(' '.join(current_piece).strip() + '.')
+            continue
+
+        # Start new chunk if current one would be too large
+        if current_size + sentence_size > chunk_size and current_chunk:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = []
+            current_size = 0
+
+        current_chunk.append(sentence)
+        current_size += sentence_size
+
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+
+    return chunks
+
+
+def validate_voice(voice: str, kokoro) -> str | np.ndarray:
+    """Validate if the voice is supported and handle voice blending.
+
+    Format for blended voices: "voice1:weight,voice2:weight"
+    Example: "af_sarah:60,am_adam:40" for 60-40 blend
+
+    Args:
+        voice: Voice name or blend specification
+        kokoro: Kokoro instance for getting voices and voice styles
+
+    Returns:
+        Voice name string or blended voice style array
+
+    Raises:
+        ValueError: If voice is invalid or blending requirements not met
+        SystemExit: On error getting supported voices
+    """
+    try:
+        supported_voices = set(kokoro.get_voices())
+
+        # Parse comma-separated voices for blend
+        if ',' in voice:
+            voices = []
+            weights = []
+
+            # Parse voice:weight pairs
+            for pair in voice.split(','):
+                if ':' in pair:
+                    v, w = pair.strip().split(':')
+                    voices.append(v.strip())
+                    weights.append(float(w.strip()))
+                else:
+                    voices.append(pair.strip())
+                    weights.append(50.0)  # Default to 50% if no weight specified
+
+            if len(voices) != 2:
+                raise ValueError("voice blending needs two comma separated voices")
+
+            # Validate voice
+            for v in voices:
+                if v not in supported_voices:
+                    supported_voices_list = ', '.join(sorted(supported_voices))
+                    raise ValueError(f"Unsupported voice: {v}\nSupported voices are: {supported_voices_list}")
+
+            # Normalize weights to sum to 100
+            total = sum(weights)
+            if total != 100:
+                weights = [w * (100/total) for w in weights]
+
+            # Create voice blend style
+            style1 = kokoro.get_voice_style(voices[0])
+            style2 = kokoro.get_voice_style(voices[1])
+            blend = np.add(style1 * (weights[0]/100), style2 * (weights[1]/100))
+            return blend
+
+        # Single voice validation
+        if voice not in supported_voices:
+            supported_voices_list = ', '.join(sorted(supported_voices))
+            raise ValueError(f"Unsupported voice: {voice}\nSupported voices are: {supported_voices_list}")
+        return voice
+    except Exception as e:
+        print(f"Error getting supported voices: {e}")
+        import sys
+        sys.exit(1)
+
+
 class KokoroEngine:
     """Main TTS engine for Kokoro text-to-speech conversion.
 
@@ -193,10 +340,7 @@ class KokoroEngine:
         Raises:
             ValueError: If language is not supported
         """
-        if lang not in SUPPORTED_LANGUAGES:
-            supported = ', '.join(sorted(SUPPORTED_LANGUAGES))
-            raise ValueError(f"Unsupported language: {lang}\nSupported: {supported}")
-        return lang
+        return validate_language(lang)
 
     def validate_voice(self, voice: str) -> str | np.ndarray:
         """Validate voice and handle voice blending.
@@ -212,45 +356,7 @@ class KokoroEngine:
         """
         if self.kokoro is None:
             self.load_model()
-
-        supported_voices = set(self.kokoro.get_voices())
-
-        # Parse comma-separated voices for blend
-        if ',' in voice:
-            voices = []
-            weights = []
-
-            for pair in voice.split(','):
-                if ':' in pair:
-                    v, w = pair.strip().split(':')
-                    voices.append(v.strip())
-                    weights.append(float(w.strip()))
-                else:
-                    voices.append(pair.strip())
-                    weights.append(50.0)
-
-            if len(voices) != 2:
-                raise ValueError("Voice blending requires exactly two voices")
-
-            # Validate voices
-            for v in voices:
-                if v not in supported_voices:
-                    raise ValueError(f"Unsupported voice: {v}")
-
-            # Normalize weights
-            total = sum(weights)
-            if total != 100:
-                weights = [w * (100/total) for w in weights]
-
-            # Create blended style
-            style1 = self.kokoro.get_voice_style(voices[0])
-            style2 = self.kokoro.get_voice_style(voices[1])
-            return np.add(style1 * (weights[0]/100), style2 * (weights[1]/100))
-
-        # Single voice validation
-        if voice not in supported_voices:
-            raise ValueError(f"Unsupported voice: {voice}")
-        return voice
+        return validate_voice(voice, self.kokoro)
 
     def chunk_text(self, text: str, chunk_size: int = 1000) -> List[str]:
         """Split text into chunks at sentence boundaries.
@@ -262,52 +368,7 @@ class KokoroEngine:
         Returns:
             List of text chunks
         """
-        sentences = text.replace('\n', ' ').split('.')
-        chunks = []
-        current_chunk = []
-        current_size = 0
-
-        for sentence in sentences:
-            if not sentence.strip():
-                continue
-
-            sentence = sentence.strip() + '.'
-            sentence_size = len(sentence)
-
-            # Split long sentences
-            if sentence_size > chunk_size:
-                words = sentence.split()
-                current_piece = []
-                current_piece_size = 0
-
-                for word in words:
-                    word_size = len(word) + 1
-                    if current_piece_size + word_size > chunk_size:
-                        if current_piece:
-                            chunks.append(' '.join(current_piece).strip() + '.')
-                        current_piece = [word]
-                        current_piece_size = word_size
-                    else:
-                        current_piece.append(word)
-                        current_piece_size += word_size
-
-                if current_piece:
-                    chunks.append(' '.join(current_piece).strip() + '.')
-                continue
-
-            # Start new chunk if needed
-            if current_size + sentence_size > chunk_size and current_chunk:
-                chunks.append(' '.join(current_chunk))
-                current_chunk = []
-                current_size = 0
-
-            current_chunk.append(sentence)
-            current_size += sentence_size
-
-        if current_chunk:
-            chunks.append(' '.join(current_chunk))
-
-        return chunks
+        return chunk_text(text, chunk_size)
 
     def process_chunk(
         self,

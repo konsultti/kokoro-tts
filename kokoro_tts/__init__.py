@@ -27,19 +27,8 @@ from pydub import AudioSegment
 warnings.filterwarnings("ignore", category=UserWarning, module='ebooklib')
 warnings.filterwarnings("ignore", category=FutureWarning, module='ebooklib')
 
-# Supported languages (hardcoded as kokoro-onnx 0.4.9+ doesn't expose get_languages())
-SUPPORTED_LANGUAGES = [
-    'en-us',   # American English
-    'en-gb',   # British English
-    'ja',      # Japanese
-    'zh',      # Mandarin Chinese
-    'ko',      # Korean
-    'es',      # Spanish
-    'fr',      # French
-    'hi',      # Hindi
-    'it',      # Italian
-    'pt-br',   # Brazilian Portuguese
-]
+# Import from core module
+from kokoro_tts.core import SUPPORTED_LANGUAGES
 
 # Global flag to stop the spinner and audio
 stop_spinner = False
@@ -243,55 +232,8 @@ def extract_text_from_epub(epub_file):
             full_text += soup.get_text()
     return full_text
 
-def chunk_text(text, initial_chunk_size=1000):
-    """Split text into chunks at sentence boundaries with dynamic sizing."""
-    sentences = text.replace('\n', ' ').split('.')
-    chunks = []
-    current_chunk = []
-    current_size = 0
-    chunk_size = initial_chunk_size
-
-    for sentence in sentences:
-        if not sentence.strip():
-            continue  # Skip empty sentences
-
-        sentence = sentence.strip() + '.'
-        sentence_size = len(sentence)
-
-        # If a single sentence is too long, split it into smaller pieces
-        if sentence_size > chunk_size:
-            words = sentence.split()
-            current_piece = []
-            current_piece_size = 0
-
-            for word in words:
-                word_size = len(word) + 1  # +1 for space
-                if current_piece_size + word_size > chunk_size:
-                    if current_piece:
-                        chunks.append(' '.join(current_piece).strip() + '.')
-                    current_piece = [word]
-                    current_piece_size = word_size
-                else:
-                    current_piece.append(word)
-                    current_piece_size += word_size
-
-            if current_piece:
-                chunks.append(' '.join(current_piece).strip() + '.')
-            continue
-
-        # Start new chunk if current one would be too large
-        if current_size + sentence_size > chunk_size and current_chunk:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = []
-            current_size = 0
-
-        current_chunk.append(sentence)
-        current_size += sentence_size
-
-    if current_chunk:
-        chunks.append(' '.join(current_chunk))
-
-    return chunks
+# Import from core module
+from kokoro_tts.core import chunk_text
 
 def save_audio_with_format(samples, sample_rate, output_file, format):
     """Save audio samples to file with specified format.
@@ -326,16 +268,8 @@ def save_audio_with_format(samples, sample_rate, output_file, format):
             # Clean up temporary WAV file
             os.remove(temp_wav_path)
 
-def validate_language(lang, kokoro=None):
-    """Validate if the language is supported.
-
-    Note: kokoro parameter is kept for backward compatibility but not used.
-    Languages are now hardcoded as kokoro-onnx 0.4.9+ doesn't expose get_languages().
-    """
-    if lang not in SUPPORTED_LANGUAGES:
-        supported_langs = ', '.join(sorted(SUPPORTED_LANGUAGES))
-        raise ValueError(f"Unsupported language: {lang}\nSupported languages are: {supported_langs}")
-    return lang
+# Import from core module
+from kokoro_tts.core import validate_language
 
 def print_usage():
     print("""
@@ -438,58 +372,8 @@ def print_supported_voices(model_path="kokoro-v1.0.onnx", voices_path="voices-v1
         print(f"Error loading model to get supported voices: {e}")
         sys.exit(1)
 
-def validate_voice(voice, kokoro):
-    """Validate if the voice is supported and handle voice blending.
-    
-    Format for blended voices: "voice1:weight,voice2:weight"
-    Example: "af_sarah:60,am_adam:40" for 60-40 blend
-    """
-    try:
-        supported_voices = set(kokoro.get_voices())
-        
-        # Parse comma seperated voices for blend
-        if ',' in voice:
-            voices = []
-            weights = []
-            
-            # Parse voice:weight pairs
-            for pair in voice.split(','):
-                if ':' in pair:
-                    v, w = pair.strip().split(':')
-                    voices.append(v.strip())
-                    weights.append(float(w.strip()))
-                else:
-                    voices.append(pair.strip())
-                    weights.append(50.0)  # Default to 50% if no weight specified
-            
-            if len(voices) != 2:
-                raise ValueError("voice blending needs two comma separated voices")
-                 
-            # Validate voice
-            for v in voices:
-                if v not in supported_voices:
-                    supported_voices_list = ', '.join(sorted(supported_voices))
-                    raise ValueError(f"Unsupported voice: {v}\nSupported voices are: {supported_voices_list}")
-             
-            # Normalize weights to sum to 100
-            total = sum(weights)
-            if total != 100:
-                weights = [w * (100/total) for w in weights]
-            
-            # Create voice blend style
-            style1 = kokoro.get_voice_style(voices[0])
-            style2 = kokoro.get_voice_style(voices[1])
-            blend = np.add(style1 * (weights[0]/100), style2 * (weights[1]/100))
-            return blend
-             
-        # Single voice validation
-        if voice not in supported_voices:
-            supported_voices_list = ', '.join(sorted(supported_voices))
-            raise ValueError(f"Unsupported voice: {voice}\nSupported voices are: {supported_voices_list}")
-        return voice
-    except Exception as e:
-        print(f"Error getting supported voices: {e}")
-        sys.exit(1)
+# Import from core module
+from kokoro_tts.core import validate_voice
 
 # Front matter keywords that should be skipped in audiobooks
 FRONT_MATTER_SKIP_KEYWORDS = [
