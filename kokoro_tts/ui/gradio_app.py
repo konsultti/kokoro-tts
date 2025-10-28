@@ -283,7 +283,7 @@ class KokoroUI:
 
             # Import required modules
             from kokoro_tts.audiobook import extract_epub_metadata, extract_pdf_metadata
-            from kokoro_tts import extract_chapters_from_epub, PdfParser
+            from kokoro_tts.core import extract_chapters_from_epub, PdfParser
 
             input_path = file.name
 
@@ -394,7 +394,7 @@ class KokoroUI:
             # Import required modules
             from kokoro_tts.audiobook import AudiobookCreator, calculate_chapter_timings, embed_audiobook_metadata
             from kokoro_tts.core import AudiobookOptions, Chapter
-            from kokoro_tts import extract_chapters_from_epub, PdfParser, generate_audiobook_intro
+            from kokoro_tts.core import extract_chapters_from_epub, PdfParser, generate_audiobook_intro
             import shutil
 
             input_path = file.name
