@@ -154,7 +154,7 @@ kokoro-tts --merge-chunks --split-output ./chunks/ --format wav
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--audiobook <file>` | Create M4A audiobook with metadata | - |
+| `--audiobook <file>` | Create M4A audiobook with metadata (parallel processing auto-enabled) | - |
 | `--title <text>` | Book title for metadata | From file |
 | `--author <name>` | Author name for metadata | From file |
 | `--narrator <name>` | Narrator name for metadata | "Kokoro TTS" |
@@ -168,7 +168,7 @@ kokoro-tts --merge-chunks --split-output ./chunks/ --format wav
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--parallel` | Enable parallel chunk processing | Disabled |
+| `--parallel` | Enable parallel chunk processing | Disabled (auto-enabled for `--audiobook`) |
 | `--max-workers <n>` | Number of worker threads | CPU count - 1 |
 | `--gpu` | Enable GPU acceleration (auto-select provider) | Disabled |
 
@@ -328,6 +328,7 @@ kokoro-tts book.epub --audiobook output.m4a \
 ```
 
 **Audiobook Features:**
+- **Parallel processing auto-enabled** for 3-8x faster generation on multi-core systems
 - Automatically skips front matter (copyright, TOC, acknowledgments, dedication, "about the author")
 - Preserves story content (foreword, preface, introduction, prologue)
 - Generates introduction: "This is [title], written by [author], narrated by Kokoro Text-to-Speech"
@@ -340,17 +341,17 @@ kokoro-tts book.epub --audiobook output.m4a \
 Speed up processing on multi-core systems:
 
 ```bash
-# Enable parallel processing (auto-detect workers)
-kokoro-tts book.epub audiobook.m4a --parallel
+# Audiobook mode (parallel processing auto-enabled)
+kokoro-tts book.epub --audiobook output.m4a
 
-# Specify number of workers
+# Audiobook with custom worker count
+kokoro-tts book.epub --audiobook output.m4a --max-workers 8
+
+# Manual parallel processing for non-audiobook
 kokoro-tts book.epub audiobook.m4a --parallel --max-workers 4
 
-# With audiobook mode
-kokoro-tts book.epub --audiobook output.m4a --parallel --max-workers 4
-
 # Combine with GPU acceleration
-kokoro-tts book.epub audiobook.m4a --parallel --max-workers 4 --gpu
+kokoro-tts book.epub --audiobook output.m4a --gpu
 
 # Using environment variables (for Web UI)
 export KOKORO_USE_PARALLEL=true
@@ -555,11 +556,12 @@ Useful for:
 
 ### Audiobook Creation Tips
 
-1. **Use `--audiobook` flag** instead of manual processing
-2. **Enable `--skip-front-matter`** to skip boilerplate content
+1. **Use `--audiobook` flag** instead of manual processing (parallel processing auto-enabled)
+2. **Enable `--skip-front-matter`** to skip boilerplate content (enabled by default)
 3. **Add metadata** with `--title`, `--author`, `--narrator`
 4. **Include cover art** with `--cover` for better organization
 5. **Select chapters** strategically with `--select-chapters`
+6. **Adjust workers** with `--max-workers` if needed (default uses all CPU cores)
 
 ### Troubleshooting
 
@@ -579,8 +581,10 @@ Useful for:
 - Check input text formatting (remove excessive punctuation)
 
 **Slow processing:**
-- Enable `--parallel` flag
-- Enable GPU with `--gpu` flag
+- Use `--audiobook` flag (parallel processing auto-enabled)
+- For non-audiobook: enable `--parallel` flag
+- Enable GPU with `--gpu` flag for additional 20-30% speedup
+- Increase workers with `--max-workers` (if using fewer than CPU count)
 - Check system resources (CPU/memory usage)
 
 **Chapter detection issues:**

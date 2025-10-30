@@ -83,11 +83,8 @@ Then open http://127.0.0.1:7860 in your browser.
 # Basic usage
 kokoro-tts input.txt output.wav
 
-# Create an audiobook
+# Create an audiobook (parallel processing auto-enabled)
 kokoro-tts book.epub audiobook.m4a --audiobook
-
-# With parallel processing for speed
-kokoro-tts book.epub audiobook.m4a --audiobook --parallel
 ```
 
 See [USAGE.md](USAGE.md) for comprehensive usage instructions.

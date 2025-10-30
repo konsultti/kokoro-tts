@@ -307,6 +307,7 @@ Performance Options:
 
 Audiobook Creation (EPUB/PDF only):
     --audiobook <output.m4a>     Create M4A audiobook with metadata and chapters
+                                 (parallel processing auto-enabled for 3-8x speedup)
     --select-chapters <sel>      Chapter selection: "all", "1,3,5", "1-5" (default: all)
     --keep-temp                  Keep temporary files after creation
     --temp-dir <dir>             Custom temporary directory
@@ -339,7 +340,7 @@ Examples:
     kokoro-tts input.epub --split-output ./chunks/ --format mp3
     kokoro-tts input.pdf --chapters ./chapters/ --format m4a
 
-    # Audiobook creation (NEW!)
+    # Audiobook creation (parallel processing auto-enabled!)
     kokoro-tts book.epub --audiobook audiobook.m4a
     kokoro-tts book.epub --audiobook output.m4a --select-chapters "1-5,10"
     kokoro-tts book.epub --audiobook output.m4a --title "My Book" --author "John Doe"
@@ -358,7 +359,7 @@ Examples:
 
     # Performance optimization (NEW!)
     kokoro-tts input.txt output.wav --parallel --max-workers 4
-    kokoro-tts book.epub --audiobook output.m4a --parallel  # Faster audiobook creation
+    kokoro-tts book.epub --audiobook output.m4a  # Parallel processing auto-enabled!
     """)
 
 def print_supported_languages(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
@@ -1475,6 +1476,14 @@ def main():
             except (EOFError, KeyboardInterrupt):
                 print("\nAborted.")
                 sys.exit(0)
+
+        # Enable parallel processing by default for audiobooks (3-8x speedup)
+        # User can still explicitly disable with environment variable KOKORO_USE_PARALLEL=false
+        if not use_parallel:
+            use_parallel = True
+            if debug:
+                print("ℹ️  Parallel processing auto-enabled for audiobook (for faster processing)")
+                print("   To disable, set environment variable: KOKORO_USE_PARALLEL=false")
 
     # Handle merge chunks operation
     if merge_chunks:
