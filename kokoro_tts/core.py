@@ -9,7 +9,9 @@ import os
 import sys
 import tempfile
 import asyncio
-from typing import Optional, Callable, List, Dict, Any, Tuple, AsyncIterator
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, Callable, List, Dict, Any, Tuple, AsyncIterator, Iterator
 from dataclasses import dataclass
 from enum import Enum
 
@@ -21,6 +23,9 @@ import soundfile as sf
 from kokoro_onnx import Kokoro
 import pymupdf4llm
 import fitz
+
+# Local imports
+from kokoro_tts.config import PerformanceConfig
 
 # Supported languages (hardcoded as kokoro-onnx 0.4.9+ doesn't expose get_languages())
 SUPPORTED_LANGUAGES = [
@@ -791,7 +796,8 @@ class KokoroEngine:
         voices_path: str = "voices-v1.0.bin",
         progress_callback: Optional[Callable[[str, int, int], None]] = None,
         use_gpu: bool = False,
-        provider: Optional[str] = None
+        provider: Optional[str] = None,
+        performance_config: Optional[PerformanceConfig] = None
     ):
         """Initialize the Kokoro TTS engine.
 
@@ -801,6 +807,7 @@ class KokoroEngine:
             progress_callback: Optional callback for progress updates (message, current, total)
             use_gpu: If True, automatically select the best available GPU provider
             provider: Explicit provider name (e.g., 'CUDAExecutionProvider'). Takes precedence over use_gpu.
+            performance_config: Optional performance configuration for parallel processing
 
         Raises:
             FileNotFoundError: If model or voices files don't exist
@@ -812,6 +819,11 @@ class KokoroEngine:
         self.kokoro: Optional[Kokoro] = None
         self.use_gpu = use_gpu
         self.provider = provider
+        self.performance_config = performance_config or PerformanceConfig()
+
+        # Async I/O support
+        self._io_executor = None
+        self._io_tasks = []
 
         # Check files exist
         if not os.path.exists(model_path):
@@ -919,6 +931,24 @@ class KokoroEngine:
         """
         return chunk_text(text, chunk_size)
 
+    def _process_chunk_wrapper(self, args):
+        """Thread-safe wrapper for process_chunk.
+
+        Args:
+            args: Tuple of (chunk, voice, speed, lang, chunk_index, debug)
+
+        Returns:
+            Tuple of (chunk_index, samples, sample_rate, error_message)
+        """
+        chunk, voice, speed, lang, chunk_index, debug = args
+        try:
+            samples, sample_rate = self.process_chunk(
+                chunk, voice, speed, lang, retry_count=0, debug=debug
+            )
+            return (chunk_index, samples, sample_rate, None)
+        except Exception as e:
+            return (chunk_index, None, None, str(e))
+
     def process_chunk(
         self,
         chunk: str,
@@ -999,7 +1029,7 @@ class KokoroEngine:
         text: str,
         options: ProcessingOptions
     ) -> Tuple[Optional[np.ndarray], Optional[int]]:
-        """Generate audio from text.
+        """Generate audio from text with optional parallel processing.
 
         Args:
             text: Text to convert
@@ -1015,17 +1045,45 @@ class KokoroEngine:
         lang = self.validate_language(options.lang)
         voice = self.validate_voice(options.voice) if options.voice else "af_sarah"
 
-        # Chunk and process
+        # Chunk the text
         chunks = self.chunk_text(text)
+        total_chunks = len(chunks)
+
+        # Choose processing path
+        if self.performance_config.use_parallel and total_chunks > 1:
+            return self._generate_audio_parallel(chunks, voice, options.speed, lang, options.debug)
+        else:
+            return self._generate_audio_sequential(chunks, voice, options.speed, lang, options.debug)
+
+    def _generate_audio_sequential(
+        self,
+        chunks: List[str],
+        voice: str | np.ndarray,
+        speed: float,
+        lang: str,
+        debug: bool
+    ) -> Tuple[Optional[np.ndarray], Optional[int]]:
+        """Original sequential implementation for audio generation.
+
+        Args:
+            chunks: List of text chunks to process
+            voice: Voice name or blended style
+            speed: Speech speed multiplier
+            lang: Language code
+            debug: Enable debug output
+
+        Returns:
+            Tuple of (audio samples, sample rate) or (None, None) on error
+        """
         all_samples = []
         sample_rate = None
 
         for i, chunk in enumerate(chunks, 1):
             if self.progress_callback:
-                self.progress_callback("Processing", i, len(chunks))
+                self.progress_callback(f"Processing chunk {i}/{len(chunks)}", i, len(chunks))
 
             samples, sr = self.process_chunk(
-                chunk, voice, options.speed, lang, debug=options.debug
+                chunk, voice, speed, lang, debug=debug
             )
 
             if samples is not None:
@@ -1033,8 +1091,83 @@ class KokoroEngine:
                 if sample_rate is None:
                     sample_rate = sr
 
+        if self.progress_callback:
+            self.progress_callback("Complete", len(chunks), len(chunks))
+
         if all_samples:
             return np.array(all_samples), sample_rate
+        return None, None
+
+    def _generate_audio_parallel(
+        self,
+        chunks: List[str],
+        voice: str | np.ndarray,
+        speed: float,
+        lang: str,
+        debug: bool
+    ) -> Tuple[Optional[np.ndarray], Optional[int]]:
+        """Parallel implementation for audio generation.
+
+        Processes multiple chunks simultaneously using thread pool.
+
+        Args:
+            chunks: List of text chunks to process
+            voice: Voice name or blended style
+            speed: Speech speed multiplier
+            lang: Language code
+            debug: Enable debug output
+
+        Returns:
+            Tuple of (audio samples, sample rate) or (None, None) on error
+        """
+        all_samples = [None] * len(chunks)
+        sample_rate = None
+        completed = 0
+        lock = threading.Lock()
+
+        # Prepare args for parallel processing
+        chunk_args = [
+            (chunk, voice, speed, lang, i, debug)
+            for i, chunk in enumerate(chunks)
+        ]
+
+        with ThreadPoolExecutor(max_workers=self.performance_config.max_workers) as executor:
+            # Submit all chunks
+            future_to_index = {
+                executor.submit(self._process_chunk_wrapper, args): args[4]
+                for args in chunk_args
+            }
+
+            # Process results as they complete
+            for future in as_completed(future_to_index):
+                chunk_index, samples, sr, error = future.result()
+
+                if error:
+                    raise RuntimeError(f"Chunk {chunk_index} failed: {error}")
+
+                all_samples[chunk_index] = samples
+                sample_rate = sr
+
+                with lock:
+                    completed += 1
+                    if self.progress_callback:
+                        self.progress_callback(
+                            f"Processing chunks",
+                            completed,
+                            len(chunks)
+                        )
+
+        if self.progress_callback:
+            self.progress_callback("Complete", len(chunks), len(chunks))
+
+        # Flatten the list of samples
+        flattened_samples = []
+        for samples in all_samples:
+            if samples is not None:
+                flattened_samples.extend(samples)
+
+        if flattened_samples:
+            return np.array(flattened_samples), sample_rate
         return None, None
 
     def save_audio(
@@ -1070,6 +1203,56 @@ class KokoroEngine:
                     audio.export(output_path, format='mp4', codec='aac', bitrate='128k')
             finally:
                 os.unlink(tmp_path)
+
+    async def save_audio_async(
+        self,
+        samples: np.ndarray,
+        sample_rate: int,
+        output_path: str,
+        format: AudioFormat = AudioFormat.WAV
+    ) -> None:
+        """Save audio samples to file asynchronously.
+
+        Offloads file I/O to executor to avoid blocking TTS processing.
+
+        Args:
+            samples: Audio sample data
+            sample_rate: Sample rate in Hz
+            output_path: Output file path
+            format: Audio format
+        """
+        loop = asyncio.get_event_loop()
+
+        # Run synchronous save_audio in executor
+        await loop.run_in_executor(
+            self._get_io_executor(),
+            self.save_audio,
+            samples,
+            sample_rate,
+            output_path,
+            format
+        )
+
+    def _get_io_executor(self) -> ThreadPoolExecutor:
+        """Get or create I/O executor for async file operations.
+
+        Returns:
+            ThreadPoolExecutor for I/O operations
+        """
+        if self._io_executor is None:
+            # Use a ThreadPoolExecutor for I/O operations
+            # Separate from main processing executor
+            self._io_executor = ThreadPoolExecutor(
+                max_workers=self.performance_config.io_queue_size,
+                thread_name_prefix="kokoro_io"
+            )
+        return self._io_executor
+
+    def _cleanup_io_executor(self):
+        """Shutdown I/O executor gracefully."""
+        if self._io_executor:
+            self._io_executor.shutdown(wait=True)
+            self._io_executor = None
 
     def extract_chapters_from_epub(
         self,
@@ -1121,6 +1304,139 @@ class KokoroEngine:
             )
             for ch in chapters_data
         ]
+
+    def extract_chapters_streaming(self, file_path: str, debug: bool = False) -> Iterator[Chapter]:
+        """Stream chapters one-at-a-time for memory efficiency.
+
+        Yields chapters without loading entire document into memory.
+
+        Args:
+            file_path: Path to input file (epub, pdf, or txt)
+            debug: Enable debug output
+
+        Yields:
+            Chapter objects one at a time
+        """
+        if file_path.endswith('.epub'):
+            yield from self._extract_epub_streaming(file_path, debug)
+        elif file_path.endswith('.pdf'):
+            yield from self._extract_pdf_streaming(file_path, debug)
+        else:
+            # Text file
+            yield from self._extract_text_streaming(file_path)
+
+    def _extract_epub_streaming(self, epub_path: str, debug: bool = False) -> Iterator[Chapter]:
+        """Stream EPUB chapters without loading all into memory.
+
+        Args:
+            epub_path: Path to EPUB file
+            debug: Enable debug output
+
+        Yields:
+            Chapter objects one at a time
+        """
+        book = epub.read_epub(epub_path)
+        toc = book.toc
+
+        for order, item in enumerate(toc):
+            try:
+                # Get the linked document
+                if hasattr(item, 'href'):
+                    href = item.href.split('#')[0]
+                    doc = book.get_item_with_href(href)
+
+                    if doc:
+                        content = doc.get_content()
+                        soup = BeautifulSoup(content, 'html.parser')
+                        text = soup.get_text()
+
+                        # Clean up soup object immediately
+                        soup.decompose()
+                        del soup, content
+
+                        yield Chapter(
+                            title=item.title,
+                            content=text,
+                            order=order
+                        )
+            except Exception as e:
+                if debug:
+                    print(f"Error extracting chapter {order}: {e}")
+                continue
+
+    def _extract_pdf_streaming(self, pdf_path: str, debug: bool = False) -> Iterator[Chapter]:
+        """Stream PDF chapters page-by-page.
+
+        Args:
+            pdf_path: Path to PDF file
+            debug: Enable debug output
+
+        Yields:
+            Chapter objects one at a time
+        """
+        doc = fitz.open(pdf_path)
+        toc = doc.get_toc()
+
+        try:
+            if toc:
+                # Stream TOC-based chapters
+                for order, (level, title, page) in enumerate(toc):
+                    if level == 1:  # Only level 1 chapters
+                        # Find next chapter's page
+                        next_page = None
+                        for i in range(order + 1, len(toc)):
+                            if toc[i][0] == 1:
+                                next_page = toc[i][2]
+                                break
+                        if next_page is None:
+                            next_page = len(doc) + 1
+
+                        # Extract text from chapter pages
+                        text_parts = []
+                        for page_num in range(page - 1, min(next_page - 1, len(doc))):
+                            text_parts.append(doc[page_num].get_text())
+
+                        yield Chapter(
+                            title=title,
+                            content='\n'.join(text_parts),
+                            order=order
+                        )
+            else:
+                # Stream page-by-page
+                for page_num in range(len(doc)):
+                    text = doc[page_num].get_text()
+                    yield Chapter(
+                        title=f"Page {page_num + 1}",
+                        content=text,
+                        order=page_num
+                    )
+        finally:
+            doc.close()
+
+    def _extract_text_streaming(self, text_path: str) -> Iterator[Chapter]:
+        """Stream text file in chunks.
+
+        Args:
+            text_path: Path to text file
+
+        Yields:
+            Chapter objects one at a time
+        """
+        chunk_size = 50000  # 50KB chunks
+
+        with open(text_path, 'r', encoding='utf-8') as f:
+            chunk_num = 0
+            while True:
+                text = f.read(chunk_size)
+                if not text:
+                    break
+
+                yield Chapter(
+                    title=f"Chunk {chunk_num + 1}",
+                    content=text,
+                    order=chunk_num
+                )
+                chunk_num += 1
 
     def process_file(
         self,
@@ -1227,7 +1543,10 @@ class KokoroEngine:
         options: ProcessingOptions,
         progress_callback: Optional[Callable[[str, int, int], None]] = None
     ) -> bool:
-        """Process a file asynchronously.
+        """Process a file asynchronously with optional streaming and async I/O.
+
+        When use_memory_streaming is enabled, processes chapters one-at-a-time.
+        When use_async_io is enabled, writes happen asynchronously.
 
         Args:
             input_path: Path to input file
@@ -1238,6 +1557,19 @@ class KokoroEngine:
         Returns:
             True if successful, False otherwise
         """
+        # Use streaming mode if enabled
+        if self.performance_config.use_memory_streaming:
+            # Streaming mode requires output directory
+            if not output_path or os.path.isfile(output_path):
+                output_dir = os.path.dirname(output_path) if output_path else "output"
+            else:
+                output_dir = output_path
+
+            return await self.process_file_streaming_async(
+                input_path, output_dir, options, progress_callback
+            )
+
+        # Original non-streaming implementation
         loop = asyncio.get_event_loop()
 
         # Store callback
@@ -1257,6 +1589,84 @@ class KokoroEngine:
             return result
         finally:
             self.progress_callback = old_callback
+
+    async def process_file_streaming_async(
+        self,
+        input_path: str,
+        output_dir: str,
+        options: ProcessingOptions,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> bool:
+        """Process file with memory streaming enabled.
+
+        Processes chapters one-at-a-time to minimize memory usage.
+
+        Args:
+            input_path: Path to input file
+            output_dir: Directory for output files
+            options: Processing options
+            progress_callback: Optional progress callback
+
+        Returns:
+            True if successful, False otherwise
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Store callback
+        old_callback = self.progress_callback
+        if progress_callback:
+            self.progress_callback = progress_callback
+
+        try:
+            chapter_idx = 0
+
+            # Stream chapters
+            for chapter in self.extract_chapters_streaming(input_path, options.debug):
+                if progress_callback:
+                    progress_callback(f"Processing chapter: {chapter.title}", chapter_idx, -1)
+
+                # Generate audio
+                samples, sample_rate = await self.generate_audio_async(chapter.content, options)
+
+                if samples is None:
+                    continue
+
+                # Sanitize chapter title for filename
+                safe_title = "".join(c for c in chapter.title if c.isalnum() or c in (' ', '-', '_')).strip()
+                safe_title = safe_title[:50]  # Limit length
+
+                # Output path
+                output_file = os.path.join(
+                    output_dir,
+                    f"chapter_{chapter_idx:03d}_{safe_title}.{options.format.value}"
+                )
+
+                # Write (async if enabled)
+                if self.performance_config.use_async_io:
+                    task = asyncio.create_task(
+                        self.save_audio_async(samples, sample_rate, output_file, options.format)
+                    )
+                    self._io_tasks.append(task)
+                else:
+                    self.save_audio(samples, sample_rate, output_file, options.format)
+
+                chapter_idx += 1
+
+            # Wait for all writes
+            if self.performance_config.use_async_io and self._io_tasks:
+                if progress_callback:
+                    progress_callback("Waiting for writes to complete...", chapter_idx, chapter_idx)
+                await asyncio.gather(*self._io_tasks)
+                self._io_tasks.clear()
+
+            if progress_callback:
+                progress_callback(f"Complete: {chapter_idx} chapters processed", chapter_idx, chapter_idx)
+
+            return chapter_idx > 0
+
+        finally:
+            self.progress_callback = old_callback
+            self._cleanup_io_executor()
 
     async def stream_audio_async(
         self,
