@@ -148,8 +148,8 @@ scripts/
 ├── README.md            # Scripts documentation
 └── convert_epubs_to_audiobooks.sh # Batch EPUB conversion
 
-PERFORMANCE.md           # Performance optimization guide
-IMPLEMENTATION_SUMMARY.md # Technical implementation details
+docs/PERFORMANCE.md           # Performance optimization guide
+docs/IMPLEMENTATION_SUMMARY.md # Technical implementation details
 ```
 
 ### Core Components
