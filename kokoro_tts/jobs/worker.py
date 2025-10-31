@@ -200,8 +200,7 @@ class AudiobookWorker:
                 try:
                     samples, sr = self.engine.generate_audio(
                         chapter.content,
-                        options,
-                        progress_callback=progress_callback
+                        options
                     )
 
                     if samples is not None:

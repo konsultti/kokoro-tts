@@ -807,17 +807,17 @@ Switch to the "Job Status" tab to monitor progress.
 Total: {len(all_jobs)} jobs
 """
 
-            # Format jobs for display
+            # Format jobs for display (as list of lists for Gradio Dataframe)
             jobs_list = []
             for job in all_jobs:
-                job_info = {
-                    "Job ID": job.job_id[:8] + "...",
-                    "Status": job.status.value.upper(),
-                    "Input": os.path.basename(job.input_file_path),
-                    "Progress": f"{job.progress.percentage:.1f}%",
-                    "Created": self._format_timestamp(job.created_at)
-                }
-                jobs_list.append(job_info)
+                job_row = [
+                    job.job_id[:8] + "...",  # Job ID
+                    job.status.value.upper(),  # Status
+                    os.path.basename(job.input_file_path),  # Input
+                    f"{job.progress.percentage:.1f}%",  # Progress
+                    self._format_timestamp(job.created_at)  # Created
+                ]
+                jobs_list.append(job_row)
 
             return summary, jobs_list
 
@@ -837,8 +837,8 @@ Total: {len(all_jobs)} jobs
             if not job_id or job_id == "No job selected":
                 return "Please select a job"
 
-            # Extract actual job ID (remove " ..." suffix if present)
-            actual_id = job_id.split(" ")[0] if " " in job_id else job_id
+            # Extract actual job ID (remove "..." suffix if present)
+            actual_id = job_id.replace("...", "").strip()
 
             # Find job by partial ID match
             all_jobs = self.job_manager.get_all_jobs()
@@ -905,8 +905,8 @@ Created: {self._format_timestamp(job.created_at)}
             if not job_id or job_id == "No job selected":
                 return "Please select a job"
 
-            # Extract actual job ID
-            actual_id = job_id.split(" ")[0] if " " in job_id else job_id
+            # Extract actual job ID (remove "..." suffix if present)
+            actual_id = job_id.replace("...", "").strip()
 
             # Find full job ID
             all_jobs = self.job_manager.get_all_jobs()
@@ -942,8 +942,8 @@ Created: {self._format_timestamp(job.created_at)}
             if not job_id or job_id == "No job selected":
                 return "Please select a job"
 
-            # Extract actual job ID
-            actual_id = job_id.split(" ")[0] if " " in job_id else job_id
+            # Extract actual job ID (remove "..." suffix if present)
+            actual_id = job_id.replace("...", "").strip()
 
             # Find full job ID
             all_jobs = self.job_manager.get_all_jobs()
@@ -965,6 +965,50 @@ Created: {self._format_timestamp(job.created_at)}
 
         except Exception as e:
             return f"Error resuming job: {str(e)}"
+
+    def download_job_file(self, job_id: str) -> Tuple[Optional[str], str]:
+        """Download the output file for a completed job.
+
+        Args:
+            job_id: Job ID to download
+
+        Returns:
+            Tuple of (file path for download, status message)
+        """
+        try:
+            if not job_id or job_id == "No job selected":
+                return None, "Please select a job"
+
+            # Extract actual job ID (remove "..." suffix if present)
+            actual_id = job_id.replace("...", "").strip()
+
+            # Find full job
+            all_jobs = self.job_manager.get_all_jobs()
+            job = None
+            for j in all_jobs:
+                if j.job_id.startswith(actual_id):
+                    job = j
+                    break
+
+            if not job:
+                return None, f"Job not found: {actual_id}"
+
+            # Check if job is completed
+            if job.status != JobStatus.COMPLETED:
+                return None, f"⚠ Job is not completed yet (status: {job.status.value})"
+
+            # Check if output file exists
+            if not job.output_file_path:
+                return None, "⚠ No output file path found for this job"
+
+            if not os.path.exists(job.output_file_path):
+                return None, f"⚠ Output file not found: {job.output_file_path}"
+
+            # Return file path for download
+            return job.output_file_path, f"✓ Ready to download: {os.path.basename(job.output_file_path)}"
+
+        except Exception as e:
+            return None, f"Error preparing download: {str(e)}"
 
     @staticmethod
     def _format_timestamp(timestamp: float) -> str:
@@ -1429,6 +1473,10 @@ def create_ui(
                 with gr.Row():
                     cancel_btn = gr.Button("🚫 Cancel Job", variant="stop", size="sm")
                     resume_btn = gr.Button("▶️ Resume Job", variant="secondary", size="sm")
+                    download_btn = gr.Button("📥 Download", variant="primary", size="sm")
+
+                # Download output
+                download_output = gr.File(label="Download Output File")
 
                 # Job details
                 job_details = gr.Textbox(
@@ -1446,7 +1494,8 @@ def create_ui(
                 # Wire up events
                 def refresh_jobs_ui():
                     summary, jobs = ui.get_all_jobs_display()
-                    job_ids = ["No job selected"] + [j["Job ID"] for j in jobs]
+                    # jobs is now a list of lists, first element [0] is Job ID
+                    job_ids = ["No job selected"] + [j[0] for j in jobs]
                     return summary, jobs, gr.update(choices=job_ids)
 
                 refresh_btn.click(
@@ -1478,16 +1527,11 @@ def create_ui(
                     outputs=[job_summary, job_list, selected_job]
                 )
 
-                # Auto-refresh functionality
-                def auto_refresh_jobs(auto_enabled):
-                    import time
-                    if auto_enabled:
-                        time.sleep(5)
-                        summary, jobs = ui.get_all_jobs_display()
-                        job_ids = ["No job selected"] + [j["Job ID"] for j in jobs]
-                        return summary, jobs, gr.update(choices=job_ids)
-                    else:
-                        return gr.update(), gr.update(), gr.update()
+                download_btn.click(
+                    fn=ui.download_job_file,
+                    inputs=[selected_job],
+                    outputs=[download_output, action_status]
+                )
 
                 # Initial load
                 demo.load(
@@ -1619,12 +1663,18 @@ def launch_ui(
 
     demo = create_ui(model_path, voices_path, share, use_gpu)
 
+    # Allow Gradio to serve files from the audiobooks output directory
+    from pathlib import Path
+    kokoro_dir = Path.home() / ".kokoro-tts"
+    audiobooks_dir = kokoro_dir / "audiobooks"
+
     try:
         demo.launch(
             server_name=server_name,
             server_port=server_port,
             share=share,
-            show_error=True
+            show_error=True,
+            allowed_paths=[str(audiobooks_dir)]
         )
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
