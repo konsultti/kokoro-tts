@@ -4,20 +4,9 @@ A text-to-speech tool using the Kokoro ONNX model with CLI and Web UI interfaces
 
 **This is a fork from https://github.com/nazdridoy/kokoro-tts**
 
-## Features
-
-- 🎭 **Dual Interface**: Command-line tool + browser-based web UI
-- 🌍 **10 Languages**: en-us, en-gb, ja, zh, ko, es, fr, hi, it, pt-br
-- 🎙️ **48+ Voices**: Wide variety with blending capabilities
-- 📚 **Multiple Formats**: Process EPUB books, PDF documents, and text files
-- ⚡ **High Performance**: 3-8x speedup with parallel processing on multi-core systems
-- 🚀 **GPU Acceleration**: CUDA, TensorRT, ROCm, and CoreML support
-- 🎵 **Output Formats**: WAV, MP3, and M4A with metadata
-- 🔄 **Streaming**: Real-time audio playback
-- 📖 **Smart Processing**: Automatic chapter detection and front matter filtering
-
 ## Major Upgrades from Original
 
+- **🚀 NEW: Background Job Queue System** - Non-blocking UI with persistent job queue
 - Fixed critical memory leak
 - **3-8x performance boost** with parallel chunk processing
 - Added AAC M4A output with metadata support
@@ -29,6 +18,21 @@ A text-to-speech tool using the Kokoro ONNX model with CLI and Web UI interfaces
 - Comprehensive testing framework
 
 All new features coded by Claude Code.
+
+## Features
+
+- 🎭 **Dual Interface**: Command-line tool + browser-based web UI
+- 🚀 **Background Job Queue**: Submit audiobook jobs and close browser - processing continues in background!
+- 📊 **Job Dashboard**: Monitor progress, cancel jobs, resume failed jobs with full status tracking
+- 🌍 **10 Languages**: en-us, en-gb, ja, zh, ko, es, fr, hi, it, pt-br
+- 🎙️ **48+ Voices**: Wide variety with blending capabilities
+- 📚 **Multiple Formats**: Process EPUB books, PDF documents, and text files
+- ⚡ **High Performance**: 3-8x speedup with parallel processing on multi-core systems
+- 💪 **GPU Acceleration**: CUDA, TensorRT, ROCm, and CoreML support
+- 🎵 **Output Formats**: WAV, MP3, and M4A with metadata
+- 🔄 **Streaming**: Real-time audio playback
+- 📖 **Smart Processing**: Automatic chapter detection and front matter filtering
+- 💾 **Persistent Jobs**: SQLite-based job persistence with resume capability
 
 ## Quick Start
 
@@ -88,6 +92,50 @@ kokoro-tts book.epub audiobook.m4a --audiobook
 ```
 
 See [USAGE.md](USAGE.md) for comprehensive usage instructions.
+
+## 🚀 Background Job Queue System (NEW!)
+
+The Web UI now includes a powerful background job queue system that revolutionizes audiobook generation:
+
+### Key Benefits
+
+- ✅ **Non-Blocking UI**: Submit jobs instantly, UI never freezes
+- ✅ **Close Browser Anytime**: Jobs continue processing in background
+- ✅ **Real-Time Progress**: Monitor jobs with live progress updates and ETA
+- ✅ **Persistent Jobs**: Survive crashes and restarts with SQLite persistence
+- ✅ **Resume Failed Jobs**: Automatic recovery from errors with partial progress saved
+- ✅ **Job Dashboard**: Full job management (view, cancel, resume) in dedicated tab
+
+### How to Use
+
+1. **Start the UI** (worker starts automatically):
+   ```bash
+   kokoro-tts-ui
+   ```
+
+2. **Submit a Background Job**:
+   - Go to "Audiobook Creator" tab
+   - Upload your EPUB/PDF file
+   - Select voice and settings
+   - Click **"Submit as Background Job"**
+   - Close the tab if you want!
+
+3. **Monitor Progress**:
+   - Switch to "Job Status" tab
+   - See all jobs with real-time progress
+   - View detailed job information
+   - Cancel running jobs or resume failed ones
+
+### Architecture
+
+```
+Web UI → JobManager → SQLite Database ← Worker Process
+                                         (Background)
+```
+
+Jobs are stored in `~/.kokoro-tts/jobs.db` and completed audiobooks in `~/.kokoro-tts/audiobooks/`
+
+For technical details, see [BACKGROUND_JOB_SYSTEM.md](BACKGROUND_JOB_SYSTEM.md)
 
 ## Installation Methods
 

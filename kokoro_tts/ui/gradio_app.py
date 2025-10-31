@@ -23,6 +23,13 @@ from kokoro_tts.core import (
     SUPPORTED_LANGUAGES
 )
 
+from kokoro_tts.jobs import (
+    JobManager,
+    JobStatus,
+    AudiobookJob,
+    BookMetadata
+)
+
 
 class KokoroUI:
     """Gradio UI wrapper for Kokoro TTS engine."""
@@ -45,6 +52,9 @@ class KokoroUI:
         self.use_gpu = use_gpu
         self.engine: Optional[KokoroEngine] = None
         self.voices_list: List[str] = []
+
+        # Initialize job manager for background processing
+        self.job_manager = JobManager()
 
     def initialize_engine(self) -> str:
         """Initialize the TTS engine and load voices.
@@ -686,6 +696,283 @@ Speed: {speed}x
             # AudiobookCreator context manager will handle its own cleanup
             # unless keep_temp is True
 
+    def submit_audiobook_job(
+        self,
+        file,
+        voice: str,
+        speed: float,
+        language: str,
+        title: str,
+        author: str,
+        skip_front_matter: bool,
+        add_intro: bool,
+        intro_text: str
+    ) -> Tuple[str, str]:
+        """Submit audiobook generation as a background job.
+
+        Args:
+            file: Uploaded EPUB or PDF
+            voice: Voice selection
+            speed: Speech speed
+            language: Language code
+            title: Book title override
+            author: Author override
+            skip_front_matter: Skip front matter chapters
+            add_intro: Add introduction chapter
+            intro_text: Custom intro text
+
+        Returns:
+            Tuple of (job ID, status message)
+        """
+        if file is None:
+            return "", "⚠ Please upload a file"
+
+        if not voice:
+            return "", "⚠ Please select a voice"
+
+        try:
+            # Create output file path
+            base_name = os.path.splitext(os.path.basename(file.name))[0]
+            output_dir = os.path.join(os.path.expanduser("~"), ".kokoro-tts", "audiobooks")
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, f"{base_name}.m4a")
+
+            # Create metadata if provided
+            metadata = None
+            if title or author:
+                metadata = BookMetadata(
+                    title=title if title else None,
+                    author=author if author else None
+                )
+
+            # Submit job
+            job_id = self.job_manager.submit_job(
+                input_file=file.name,
+                output_file=output_file,
+                voice=voice,
+                speed=speed,
+                lang=language,
+                output_format="m4a",
+                skip_front_matter=skip_front_matter,
+                intro_text=intro_text if intro_text else None,
+                no_intro=not add_intro,
+                use_gpu=self.use_gpu,
+                metadata=metadata
+            )
+
+            status_msg = f"""✓ Job submitted successfully!
+
+Job ID: {job_id}
+Input: {os.path.basename(file.name)}
+Output: {output_file}
+Voice: {voice}
+Speed: {speed}x
+
+The audiobook will be processed in the background.
+Switch to the "Job Status" tab to monitor progress.
+"""
+
+            return job_id, status_msg
+
+        except Exception as e:
+            return "", f"✗ Error submitting job: {str(e)}"
+
+    def get_all_jobs_display(self) -> Tuple[str, List[dict]]:
+        """Get all jobs formatted for display.
+
+        Returns:
+            Tuple of (summary text, list of job dictionaries)
+        """
+        try:
+            all_jobs = self.job_manager.get_all_jobs(limit=50)
+
+            if not all_jobs:
+                return "No jobs found", []
+
+            # Group by status
+            queued = [j for j in all_jobs if j.status == JobStatus.QUEUED]
+            running = [j for j in all_jobs if j.status == JobStatus.RUNNING]
+            completed = [j for j in all_jobs if j.status == JobStatus.COMPLETED]
+            failed = [j for j in all_jobs if j.status == JobStatus.FAILED]
+            cancelled = [j for j in all_jobs if j.status == JobStatus.CANCELLED]
+
+            summary = f"""📊 Job Queue Summary
+
+🔵 Queued: {len(queued)}
+⚙️ Running: {len(running)}
+✅ Completed: {len(completed)}
+❌ Failed: {len(failed)}
+🚫 Cancelled: {len(cancelled)}
+
+Total: {len(all_jobs)} jobs
+"""
+
+            # Format jobs for display
+            jobs_list = []
+            for job in all_jobs:
+                job_info = {
+                    "Job ID": job.job_id[:8] + "...",
+                    "Status": job.status.value.upper(),
+                    "Input": os.path.basename(job.input_file_path),
+                    "Progress": f"{job.progress.percentage:.1f}%",
+                    "Created": self._format_timestamp(job.created_at)
+                }
+                jobs_list.append(job_info)
+
+            return summary, jobs_list
+
+        except Exception as e:
+            return f"Error loading jobs: {str(e)}", []
+
+    def get_job_details(self, job_id: str) -> str:
+        """Get detailed information about a specific job.
+
+        Args:
+            job_id: Job ID to query
+
+        Returns:
+            Formatted job details
+        """
+        try:
+            if not job_id or job_id == "No job selected":
+                return "Please select a job"
+
+            # Extract actual job ID (remove " ..." suffix if present)
+            actual_id = job_id.split(" ")[0] if " " in job_id else job_id
+
+            # Find job by partial ID match
+            all_jobs = self.job_manager.get_all_jobs()
+            job = None
+            for j in all_jobs:
+                if j.job_id.startswith(actual_id) or j.job_id == actual_id:
+                    job = j
+                    break
+
+            if not job:
+                return f"Job not found: {actual_id}"
+
+            # Format details
+            details = f"""📋 Job Details
+
+Job ID: {job.job_id}
+Status: {job.status.value.upper()}
+Created: {self._format_timestamp(job.created_at)}
+
+📁 Files:
+  Input: {job.input_file_path}
+  Output: {job.output_file_path}
+
+⚙️ Settings:
+  Voice: {job.processing_options.get('voice', 'N/A')}
+  Speed: {job.processing_options.get('speed', 1.0)}x
+  Language: {job.processing_options.get('lang', 'N/A')}
+
+📊 Progress:
+  Percentage: {job.progress.percentage:.1f}%
+  Chapters: {job.progress.completed_chapters}/{job.progress.total_chapters}
+  Current: {job.progress.current_operation or 'N/A'}
+"""
+
+            if job.progress.eta_seconds:
+                details += f"  ETA: {job.progress.format_eta()}\n"
+
+            if job.status == JobStatus.COMPLETED:
+                elapsed = job.get_elapsed_time()
+                if elapsed:
+                    details += f"\n⏱️ Processing Time: {elapsed:.1f}s\n"
+                if job.output_file_size:
+                    size_mb = job.output_file_size / (1024 * 1024)
+                    details += f"💾 Output Size: {size_mb:.1f} MB\n"
+
+            if job.status == JobStatus.FAILED and job.error_info:
+                details += f"\n❌ Error:\n{job.error_info.error_message}\n"
+
+            return details
+
+        except Exception as e:
+            return f"Error loading job details: {str(e)}"
+
+    def cancel_job_action(self, job_id: str) -> str:
+        """Cancel a job.
+
+        Args:
+            job_id: Job ID to cancel
+
+        Returns:
+            Status message
+        """
+        try:
+            if not job_id or job_id == "No job selected":
+                return "Please select a job"
+
+            # Extract actual job ID
+            actual_id = job_id.split(" ")[0] if " " in job_id else job_id
+
+            # Find full job ID
+            all_jobs = self.job_manager.get_all_jobs()
+            full_id = None
+            for j in all_jobs:
+                if j.job_id.startswith(actual_id):
+                    full_id = j.job_id
+                    break
+
+            if not full_id:
+                return f"Job not found: {actual_id}"
+
+            success = self.job_manager.cancel_job(full_id)
+
+            if success:
+                return f"✓ Job cancelled: {actual_id}..."
+            else:
+                return f"⚠ Cannot cancel job (may already be completed/cancelled)"
+
+        except Exception as e:
+            return f"Error cancelling job: {str(e)}"
+
+    def resume_job_action(self, job_id: str) -> str:
+        """Resume a failed job.
+
+        Args:
+            job_id: Job ID to resume
+
+        Returns:
+            Status message
+        """
+        try:
+            if not job_id or job_id == "No job selected":
+                return "Please select a job"
+
+            # Extract actual job ID
+            actual_id = job_id.split(" ")[0] if " " in job_id else job_id
+
+            # Find full job ID
+            all_jobs = self.job_manager.get_all_jobs()
+            full_id = None
+            for j in all_jobs:
+                if j.job_id.startswith(actual_id):
+                    full_id = j.job_id
+                    break
+
+            if not full_id:
+                return f"Job not found: {actual_id}"
+
+            success = self.job_manager.resume_job(full_id)
+
+            if success:
+                return f"✓ Job resumed: {actual_id}..."
+            else:
+                return f"⚠ Cannot resume job (may not have failed or no resume data)"
+
+        except Exception as e:
+            return f"Error resuming job: {str(e)}"
+
+    @staticmethod
+    def _format_timestamp(timestamp: float) -> str:
+        """Format Unix timestamp as readable string."""
+        import datetime
+        dt = datetime.datetime.fromtimestamp(timestamp)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
 
 def create_ui(
     model_path: str = "kokoro-v1.0.onnx",
@@ -1026,12 +1313,24 @@ def create_ui(
                             value=False
                         )
 
-                # Generate button
-                ab_generate_btn = gr.Button(
-                    "🎧 Create Audiobook",
-                    variant="primary",
-                    size="lg"
-                )
+                # Generate buttons
+                with gr.Row():
+                    ab_generate_btn = gr.Button(
+                        "🎧 Create Audiobook (Blocking)",
+                        variant="secondary",
+                        size="lg"
+                    )
+                    ab_submit_job_btn = gr.Button(
+                        "⏳ Submit as Background Job",
+                        variant="primary",
+                        size="lg"
+                    )
+
+                gr.Markdown("""
+                **Note:**
+                - **Background Job** (recommended): Submit to queue and process in background. You can close this tab.
+                - **Blocking**: Process now and wait. UI will freeze until complete.
+                """)
 
                 # Output
                 with gr.Row():
@@ -1071,6 +1370,129 @@ def create_ui(
                         ab_intro_text, ab_keep_temp, ab_no_chapters
                     ],
                     outputs=[ab_output, ab_info, ab_progress]
+                )
+
+                # Background job submission
+                def submit_job_wrapper(file, voice, speed, lang, title, author, skip_front, add_intro, intro_text):
+                    job_id, msg = ui.submit_audiobook_job(
+                        file, voice, speed, lang, title, author,
+                        skip_front, add_intro, intro_text
+                    )
+                    return None, msg, ""  # Clear output, show message in info, clear progress
+
+                ab_submit_job_btn.click(
+                    fn=submit_job_wrapper,
+                    inputs=[
+                        audiobook_file, ab_voice, ab_speed, ab_lang,
+                        ab_title, ab_author,
+                        ab_skip_front, ab_add_intro, ab_intro_text
+                    ],
+                    outputs=[ab_output, ab_info, ab_progress]
+                )
+
+            # ===== TAB 5: Job Status Dashboard =====
+            with gr.Tab("Job Status"):
+                gr.Markdown("""
+                ### 📊 Background Job Queue
+                Monitor and manage audiobook generation jobs running in the background.
+                Jobs continue processing even if you close this tab!
+                """)
+
+                with gr.Row():
+                    refresh_btn = gr.Button("🔄 Refresh Status", variant="secondary")
+                    auto_refresh = gr.Checkbox(label="Auto-refresh (every 5s)", value=False)
+
+                # Job summary
+                job_summary = gr.Textbox(
+                    label="Queue Summary",
+                    lines=8,
+                    interactive=False
+                )
+
+                # Job list
+                job_list = gr.Dataframe(
+                    headers=["Job ID", "Status", "Input", "Progress", "Created"],
+                    label="All Jobs",
+                    interactive=False,
+                    wrap=True
+                )
+
+                # Job selection and actions
+                with gr.Row():
+                    selected_job = gr.Dropdown(
+                        label="Select Job",
+                        choices=["No job selected"],
+                        value="No job selected",
+                        interactive=True
+                    )
+
+                with gr.Row():
+                    cancel_btn = gr.Button("🚫 Cancel Job", variant="stop", size="sm")
+                    resume_btn = gr.Button("▶️ Resume Job", variant="secondary", size="sm")
+
+                # Job details
+                job_details = gr.Textbox(
+                    label="Job Details",
+                    lines=15,
+                    interactive=False
+                )
+
+                action_status = gr.Textbox(
+                    label="Action Status",
+                    lines=2,
+                    interactive=False
+                )
+
+                # Wire up events
+                def refresh_jobs_ui():
+                    summary, jobs = ui.get_all_jobs_display()
+                    job_ids = ["No job selected"] + [j["Job ID"] for j in jobs]
+                    return summary, jobs, gr.update(choices=job_ids)
+
+                refresh_btn.click(
+                    fn=refresh_jobs_ui,
+                    outputs=[job_summary, job_list, selected_job]
+                )
+
+                selected_job.change(
+                    fn=ui.get_job_details,
+                    inputs=[selected_job],
+                    outputs=[job_details]
+                )
+
+                cancel_btn.click(
+                    fn=ui.cancel_job_action,
+                    inputs=[selected_job],
+                    outputs=[action_status]
+                ).then(
+                    fn=refresh_jobs_ui,
+                    outputs=[job_summary, job_list, selected_job]
+                )
+
+                resume_btn.click(
+                    fn=ui.resume_job_action,
+                    inputs=[selected_job],
+                    outputs=[action_status]
+                ).then(
+                    fn=refresh_jobs_ui,
+                    outputs=[job_summary, job_list, selected_job]
+                )
+
+                # Auto-refresh functionality
+                def auto_refresh_jobs(auto_enabled):
+                    import time
+                    if auto_enabled:
+                        time.sleep(5)
+                        summary, jobs = ui.get_all_jobs_display()
+                        job_ids = ["No job selected"] + [j["Job ID"] for j in jobs]
+                        return summary, jobs, gr.update(choices=job_ids)
+                    else:
+                        return gr.update(), gr.update(), gr.update()
+
+                # Initial load
+                demo.load(
+                    fn=refresh_jobs_ui,
+                    outputs=[job_summary, job_list, selected_job]
                 )
 
         # Load voices on startup
@@ -1130,7 +1552,7 @@ def launch_ui(
     share: bool = False,
     use_gpu: bool = False
 ):
-    """Launch the Gradio web UI.
+    """Launch the Gradio web UI with background worker.
 
     This function can be called directly or used as a console entry point.
     When used as a console entry point (kokoro-tts-ui), it parses command-line
@@ -1146,6 +1568,9 @@ def launch_ui(
     """
     # If called as entry point, parse args
     import sys
+    import atexit
+    from kokoro_tts.jobs import start_worker_process
+
     if len(sys.argv) > 1:
         import argparse
         parser = argparse.ArgumentParser(description="Launch Kokoro TTS Web UI")
@@ -1164,13 +1589,48 @@ def launch_ui(
         share = args.share
         use_gpu = args.gpu
 
-    demo = create_ui(model_path, voices_path, share, use_gpu)
-    demo.launch(
-        server_name=server_name,
-        server_port=server_port,
-        share=share,
-        show_error=True
+    # Start background worker process
+    print("\n" + "="*60)
+    print("Starting Kokoro TTS UI with Background Job Queue")
+    print("="*60)
+    print("Starting background worker process...")
+
+    worker_process = start_worker_process(
+        model_path=model_path,
+        voices_path=voices_path
     )
+
+    # Register cleanup function to terminate worker on exit
+    def cleanup_worker():
+        if worker_process.is_alive():
+            print("\nShutting down background worker...")
+            worker_process.terminate()
+            worker_process.join(timeout=5)
+            if worker_process.is_alive():
+                worker_process.kill()
+            print("Worker stopped.")
+
+    atexit.register(cleanup_worker)
+
+    print(f"Worker started (PID: {worker_process.pid})")
+    print("\nJobs submitted via UI will be processed in the background.")
+    print("You can close browser tabs and jobs will continue running.")
+    print("="*60 + "\n")
+
+    demo = create_ui(model_path, voices_path, share, use_gpu)
+
+    try:
+        demo.launch(
+            server_name=server_name,
+            server_port=server_port,
+            share=share,
+            show_error=True
+        )
+    except KeyboardInterrupt:
+        print("\nShutting down gracefully...")
+        cleanup_worker()
+    finally:
+        cleanup_worker()
 
 
 if __name__ == "__main__":
